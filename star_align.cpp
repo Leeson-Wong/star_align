@@ -60,12 +60,16 @@ constexpr int VP_ACTIVE   = 1;
 constexpr int VP_USED     = 0x100;
 constexpr int VP_LOCKED   = 0x200;
 constexpr int VP_POSSIBLE = 0x400;
+constexpr int VP_CORNER   = 0x800;
 
 struct VotingPair {
     int refStar = 0;
     int tgtStar = 0;
     int nrVotes = 0;
     int flags   = VP_ACTIVE;
+    // Corner locking: direct coordinates (used when VP_CORNER is set)
+    double cornerRefX = 0, cornerRefY = 0;
+    double cornerTgtX = 0, cornerTgtY = 0;
 
     VotingPair() = default;
     VotingPair(int rs, int ts) : refStar(rs), tgtStar(ts), nrVotes(0), flags(VP_ACTIVE) {}
@@ -74,11 +78,21 @@ struct VotingPair {
     bool isUsed()     const { return (flags & VP_USED)     != 0; }
     bool isLocked()   const { return (flags & VP_LOCKED)   != 0; }
     bool isPossible() const { return (flags & VP_POSSIBLE) != 0; }
+    bool isCorner()   const { return (flags & VP_CORNER)   != 0; }
 
     void setActive(bool v)   { if (v) flags |= VP_ACTIVE;   else flags &= ~VP_ACTIVE; }
     void setUsed(bool v)     { if (v) flags |= VP_USED;     else flags &= ~VP_USED; }
     void setLocked(bool v)   { if (v) flags |= VP_LOCKED;   else flags &= ~VP_LOCKED; }
     void setPossible(bool v) { if (v) flags |= VP_POSSIBLE; else flags &= ~VP_POSSIBLE; }
+
+    static VotingPair makeCorner(double refX, double refY, double tgtX, double tgtY) {
+        VotingPair vp;
+        vp.flags = VP_ACTIVE | VP_CORNER | VP_LOCKED;
+        vp.nrVotes = 10000000;
+        vp.cornerRefX = refX; vp.cornerRefY = refY;
+        vp.cornerTgtX = tgtX; vp.cornerTgtY = tgtY;
+        return vp;
+    }
 
     friend bool operator<(const VotingPair& lhs, const VotingPair& rhs) noexcept {
         return lhs.nrVotes < rhs.nrVotes;
@@ -640,14 +654,22 @@ bool computeTransformation(const std::vector<VotingPair>& pairs,
     std::vector<double> M0(N), M1(N), M2(N), M3(N), rhsX(N), rhsY(N);
 
     for (size_t i = 0; i < N; ++i) {
-        const Star& rs = refStars[pairs[i].refStar];
-        const Star& ts = tgtStars[pairs[i].tgtStar];
+        double refX, refY, tgtX, tgtY;
+        if (pairs[i].isCorner()) {
+            refX = pairs[i].cornerRefX; refY = pairs[i].cornerRefY;
+            tgtX = pairs[i].cornerTgtX; tgtY = pairs[i].cornerTgtY;
+        } else {
+            const Star& rs = refStars[pairs[i].refStar];
+            const Star& ts = tgtStars[pairs[i].tgtStar];
+            refX = rs.x; refY = rs.y;
+            tgtX = ts.x; tgtY = ts.y;
+        }
 
-        rhsX[i] = rs.x / fXWidth;
-        rhsY[i] = rs.y / fYWidth;
+        rhsX[i] = refX / fXWidth;
+        rhsY[i] = refY / fYWidth;
 
-        const double X1 = ts.x / fXWidth;
-        const double Y1 = ts.y / fYWidth;
+        const double X1 = tgtX / fXWidth;
+        const double Y1 = tgtY / fYWidth;
         M0[i] = 1.0;
         M1[i] = X1;
         M2[i] = Y1;
@@ -676,11 +698,19 @@ std::pair<double, size_t> computeDistances(const std::vector<VotingPair>& pairs,
     distances.clear();
 
     for (size_t i = 0; i < pairs.size(); ++i) {
-        const Star& ts = tgtStars[pairs[i].tgtStar];
-        const Star& rs = refStars[pairs[i].refStar];
-        double refX, refY;
-        params.transform(ts.x, ts.y, refX, refY);
-        const double dist = Distance(refX, refY, rs.x, rs.y);
+        double tgtX, tgtY, refX, refY;
+        if (pairs[i].isCorner()) {
+            tgtX = pairs[i].cornerTgtX; tgtY = pairs[i].cornerTgtY;
+            refX = pairs[i].cornerRefX; refY = pairs[i].cornerRefY;
+        } else {
+            const Star& ts = tgtStars[pairs[i].tgtStar];
+            const Star& rs = refStars[pairs[i].refStar];
+            tgtX = ts.x; tgtY = ts.y;
+            refX = rs.x; refY = rs.y;
+        }
+        double projRefX, projRefY;
+        params.transform(tgtX, tgtY, projRefX, projRefY);
+        const double dist = Distance(projRefX, projRefY, refX, refY);
         distances.push_back(dist);
         if (dist > maxDist) {
             maxDist = dist;
@@ -750,6 +780,7 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
                     bool bOneDeactivated = false;
 
                     for (size_t i = 0; i < vDistances.size(); ++i) {
+                        if (vWorking[vAddedPairs[i]].isCorner()) continue;
                         if (std::abs(vDistances[i] - fAverage) > 2.0 * fSigma) {
                             vWorking[vAddedPairs[i]].setActive(false);
                             if (vDistances[i] < 7.0)
@@ -760,6 +791,7 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
 
                     if (!bOneDeactivated) {
                         for (size_t i = 0; i < vDistances.size(); ++i) {
+                            if (vWorking[vAddedPairs[i]].isCorner()) continue;
                             if (std::abs(vDistances[i] - fAverage) > fSigma) {
                                 vWorking[vAddedPairs[i]].setActive(false);
                                 bOneDeactivated = true;
@@ -768,7 +800,8 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
                     }
 
                     if (!bOneDeactivated) {
-                        vWorking[vAddedPairs[maxDistanceIndex]].setActive(false);
+                        if (!vWorking[vAddedPairs[maxDistanceIndex]].isCorner())
+                            vWorking[vAddedPairs[maxDistanceIndex]].setActive(false);
                     }
                 } else {
                     // Good transformation found
@@ -843,14 +876,57 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
     return bResult;
 }
 
-// ---- ComputeSigmaClippingTransformation (simplified, no corner locking) ----
+// ---- ComputeSigmaClippingTransformation with corner locking ----
 
 bool computeSigmaClippingTransformation(std::vector<VotingPair>& vPairs,
                                          const std::vector<Star>& refStars,
                                          const std::vector<Star>& tgtStars,
                                          double fXWidth, double fYHeight,
                                          BilinearParams& params) {
-    bool bResult = computeCoordinatesTransformation(vPairs, refStars, tgtStars, fXWidth, fYHeight, params);
+    // Step 1: Compute a base transformation without corner locking
+    BilinearParams baseParams;
+    std::vector<VotingPair> basePairs = vPairs;
+    bool bResult = computeCoordinatesTransformation(basePairs, refStars, tgtStars, fXWidth, fYHeight, baseParams);
+
+    if (!bResult)
+        return false;
+
+    // Step 2: Use base transformation to map the 4 target corners to reference coordinates
+    const double w = fXWidth - 1.0;
+    const double h = fYHeight - 1.0;
+    // Target corners
+    const double tgtCorners[4][2] = {
+        {0, 0}, {w, 0}, {0, h}, {w, h}
+    };
+    // Map each target corner through base transformation to get reference corner
+    double refCorners[4][2];
+    for (int c = 0; c < 4; ++c)
+        baseParams.transform(tgtCorners[c][0], tgtCorners[c][1], refCorners[c][0], refCorners[c][1]);
+
+    // Step 3: Add corner pairs with very high votes
+    std::vector<VotingPair> cornerPairs = vPairs;
+    for (int c = 0; c < 4; ++c)
+        cornerPairs.push_back(VotingPair::makeCorner(
+            refCorners[c][0], refCorners[c][1],
+            tgtCorners[c][0], tgtCorners[c][1]));
+
+    // Sort descending by votes (corners with 10M votes go to top)
+    std::sort(cornerPairs.begin(), cornerPairs.end(),
+        [](const VotingPair& a, const VotingPair& b) { return a.nrVotes > b.nrVotes; });
+
+    // Step 4: Compute final transformation with corners locked
+    bResult = computeCoordinatesTransformation(cornerPairs, refStars, tgtStars, fXWidth, fYHeight, params);
+
+    if (bResult) {
+        // Remove corner pairs from final output
+        std::vector<VotingPair> cleanPairs;
+        for (const auto& vp : cornerPairs) {
+            if (vp.isActive() && !vp.isCorner())
+                cleanPairs.push_back(vp);
+        }
+        vPairs = cleanPairs;
+    }
+
     return bResult;
 }
 
@@ -1176,12 +1252,19 @@ std::vector<uint16_t> transformBGRA(
 
             const size_t dstIdx = (static_cast<size_t>(oy) * width + ox) * 4;
 
-            // Bilinear interpolation for B(0), G(1), R(2)
-            dstBGRA[dstIdx + 0] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 0);
-            dstBGRA[dstIdx + 1] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 1);
-            dstBGRA[dstIdx + 2] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 2);
-            // Alpha channel: set to 0xFFFF
-            dstBGRA[dstIdx + 3] = 0xFFFF;
+            if (srcFX >= 0.0 && srcFX < width && srcFY >= 0.0 && srcFY < height) {
+                // Valid source region: bilinear interpolation
+                dstBGRA[dstIdx + 0] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 0);
+                dstBGRA[dstIdx + 1] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 1);
+                dstBGRA[dstIdx + 2] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 2);
+                dstBGRA[dstIdx + 3] = 0xFFFF;
+            } else {
+                // Out of bounds: black, alpha=0 marks invalid
+                dstBGRA[dstIdx + 0] = 0;
+                dstBGRA[dstIdx + 1] = 0;
+                dstBGRA[dstIdx + 2] = 0;
+                dstBGRA[dstIdx + 3] = 0;
+            }
         }
     }
 
@@ -1201,12 +1284,18 @@ std::vector<uint16_t> stackBGRAImages(
 
     const int effectiveStride = (stride > 0) ? stride : (width * 4 * sizeof(uint16_t));
 
+    const size_t totalPixels = static_cast<size_t>(width) * static_cast<size_t>(height);
+
     // Accumulator in double precision (4 channels per pixel)
     std::vector<double> accumulator(totalChannels, 0.0);
+    // Per-pixel valid frame count
+    std::vector<size_t> validCount(totalPixels, 0);
 
-    // Frame 0 is reference - add directly
+    // Frame 0 is reference - add directly (all pixels valid)
     for (size_t i = 0; i < totalChannels; ++i)
         accumulator[i] = images[0][i];
+    for (size_t p = 0; p < totalPixels; ++p)
+        validCount[p] = 1;
 
     // Transform and accumulate remaining frames
     for (size_t f = 1; f < nFrames; ++f) {
@@ -1216,21 +1305,32 @@ std::vector<uint16_t> stackBGRAImages(
                                           alignments[f].offsetX, alignments[f].offsetY,
                                           alignments[f].angle);
 
-        for (size_t i = 0; i < totalChannels; ++i)
-            accumulator[i] += transformed[i];
+        for (size_t p = 0; p < totalPixels; ++p) {
+            // Alpha != 0 means valid pixel
+            if (transformed[p * 4 + 3] != 0) {
+                accumulator[p * 4 + 0] += transformed[p * 4 + 0];
+                accumulator[p * 4 + 1] += transformed[p * 4 + 1];
+                accumulator[p * 4 + 2] += transformed[p * 4 + 2];
+                ++validCount[p];
+            }
+        }
     }
 
-    // Divide by number of actually accumulated frames to get mean.
-    size_t count = 1; // reference frame
-    for (size_t f = 1; f < nFrames; ++f) {
-        if (alignments[f].success) ++count;
-    }
-
-    std::vector<uint16_t> result(totalChannels);
-    const double invCount = 1.0 / static_cast<double>(count);
-    for (size_t i = 0; i < totalChannels; ++i) {
-        result[i] = static_cast<uint16_t>(std::min(65535.0, std::max(0.0,
-            std::round(accumulator[i] * invCount))));
+    // Divide by per-pixel valid count
+    std::vector<uint16_t> result(totalChannels, 0);
+    for (size_t p = 0; p < totalPixels; ++p) {
+        if (validCount[p] > 0) {
+            const double invCount = 1.0 / static_cast<double>(validCount[p]);
+            const size_t base = p * 4;
+            result[base + 0] = static_cast<uint16_t>(std::min(65535.0, std::max(0.0,
+                std::round(accumulator[base + 0] * invCount))));
+            result[base + 1] = static_cast<uint16_t>(std::min(65535.0, std::max(0.0,
+                std::round(accumulator[base + 1] * invCount))));
+            result[base + 2] = static_cast<uint16_t>(std::min(65535.0, std::max(0.0,
+                std::round(accumulator[base + 2] * invCount))));
+            result[base + 3] = 0xFFFF;
+        }
+        // else: remains (0, 0, 0, 0) — black, invalid
     }
 
     return result;
