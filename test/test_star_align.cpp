@@ -35,26 +35,22 @@ struct RawImage {
 };
 
 // Load a RAW file via LibRaw and convert to BGRA16.
-// LibRaw handles: unpacking, demosaicing, white balance, exposure, gamma.
-// Output: BGRA16 (B, G, R, A interleaved, 4 x uint16_t per pixel).
 static bool loadRawToBGRA(const std::string& path, RawImage& out) {
     LibRaw lr;
 
-    // Configure processing parameters (match previous hand-tuned pipeline)
-    lr.imgdata.params.output_bps    = 16;       // 16-bit output
-    lr.imgdata.params.use_camera_wb = 1;        // use camera WB if available
-    lr.imgdata.params.use_auto_wb   = 1;        // fallback to auto WB
-    lr.imgdata.params.no_auto_bright = 0;       // enable auto brightness
-    lr.imgdata.params.user_qual     = 3;        // AHD demosaic (best quality)
-    lr.imgdata.params.output_color  = 1;        // sRGB
-    lr.imgdata.params.gamm[0]       = 2.2;      // gamma power
-    lr.imgdata.params.gamm[1]       = 4.5;      // gamma toe slope
-    lr.imgdata.params.exp_correc    = 1;        // enable exposure correction
-    lr.imgdata.params.exp_shift     = 1.20;     // exposure boost for astrophotography
-    lr.imgdata.params.highlight     = 0;        // clip highlights
-    lr.imgdata.params.fbdd_noiserd  = 0;        // disable FBDD noise reduction (preserve stars)
+    lr.imgdata.params.output_bps    = 16;
+    lr.imgdata.params.use_camera_wb = 1;
+    lr.imgdata.params.use_auto_wb   = 1;
+    lr.imgdata.params.no_auto_bright = 0;
+    lr.imgdata.params.user_qual     = 3;
+    lr.imgdata.params.output_color  = 1;
+    lr.imgdata.params.gamm[0]       = 2.2;
+    lr.imgdata.params.gamm[1]       = 4.5;
+    lr.imgdata.params.exp_correc    = 1;
+    lr.imgdata.params.exp_shift     = 1.20;
+    lr.imgdata.params.highlight     = 0;
+    lr.imgdata.params.fbdd_noiserd  = 0;
 
-    // Open and unpack the RAW file
     int ret = lr.open_file(path.c_str());
     if (ret != LIBRAW_SUCCESS) {
         std::cerr << "Error: LibRaw cannot open " << path
@@ -69,7 +65,6 @@ static bool loadRawToBGRA(const std::string& path, RawImage& out) {
         return false;
     }
 
-    // Process: demosaic + WB + exposure + gamma + color conversion
     ret = lr.dcraw_process();
     if (ret != LIBRAW_SUCCESS) {
         std::cerr << "Error: LibRaw dcraw_process failed for " << path
@@ -77,7 +72,6 @@ static bool loadRawToBGRA(const std::string& path, RawImage& out) {
         return false;
     }
 
-    // Get processed image
     int errcode = 0;
     libraw_processed_image_t* image = lr.dcraw_make_mem_image(&errcode);
     if (!image || errcode != LIBRAW_SUCCESS) {
@@ -89,7 +83,6 @@ static bool loadRawToBGRA(const std::string& path, RawImage& out) {
     out.height = image->height;
 
     if (image->colors == 3 && image->bits == 16) {
-        // LibRaw outputs RGB16 interleaved (R, G, B per pixel, 3 x uint16_t)
         const size_t pixelCount = static_cast<size_t>(out.width) * out.height;
         const uint16_t* rgb = reinterpret_cast<const uint16_t*>(image->data);
         out.bgra.resize(pixelCount * 4);
@@ -100,15 +93,14 @@ static bool loadRawToBGRA(const std::string& path, RawImage& out) {
             out.bgra[i * 4 + 3] = 0xFFFF;            // A
         }
     } else if (image->colors == 3 && image->bits == 8) {
-        // 8-bit output: scale up to 16-bit
         const size_t pixelCount = static_cast<size_t>(out.width) * out.height;
         const uint8_t* rgb8 = image->data;
         out.bgra.resize(pixelCount * 4);
         for (size_t i = 0; i < pixelCount; i++) {
-            out.bgra[i * 4 + 0] = static_cast<uint16_t>(rgb8[i * 3 + 2]) << 8;  // B
-            out.bgra[i * 4 + 1] = static_cast<uint16_t>(rgb8[i * 3 + 1]) << 8;  // G
-            out.bgra[i * 4 + 2] = static_cast<uint16_t>(rgb8[i * 3 + 0]) << 8;  // R
-            out.bgra[i * 4 + 3] = 0xFFFF;                                          // A
+            out.bgra[i * 4 + 0] = static_cast<uint16_t>(rgb8[i * 3 + 2]) << 8;
+            out.bgra[i * 4 + 1] = static_cast<uint16_t>(rgb8[i * 3 + 1]) << 8;
+            out.bgra[i * 4 + 2] = static_cast<uint16_t>(rgb8[i * 3 + 0]) << 8;
+            out.bgra[i * 4 + 3] = 0xFFFF;
         }
     } else {
         std::cerr << "Error: Unexpected image format from LibRaw (colors="
@@ -120,10 +112,6 @@ static bool loadRawToBGRA(const std::string& path, RawImage& out) {
     LibRaw::dcraw_clear_mem(image);
     return true;
 }
-
-// ============================================================================
-// Raw file extension filter
-// ============================================================================
 
 static bool isRawFile(const std::string& ext) {
     static const char* rawExts[] = {
@@ -139,10 +127,6 @@ static bool isRawFile(const std::string& ext) {
     return false;
 }
 
-// ============================================================================
-// Main
-// ============================================================================
-
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <raw_directory> [--stack <output.raw>]" << std::endl;
@@ -151,9 +135,8 @@ int main(int argc, char* argv[]) {
 
     std::string rawDir = argv[1];
     std::string stackOutputPath;
-    int transformFrame = -1;  // --transform <N>: output single transformed frame
+    int transformFrame = -1;
 
-    // Parse options
     for (int i = 2; i < argc; ++i) {
         if (std::string(argv[i]) == "--stack" && i + 1 < argc) {
             stackOutputPath = argv[i + 1];
@@ -164,7 +147,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Collect RAW files
     std::vector<fs::path> rawFiles;
     for (const auto& entry : fs::directory_iterator(rawDir)) {
         if (entry.is_regular_file()) {
@@ -181,7 +163,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Sort by filename
     std::sort(rawFiles.begin(), rawFiles.end());
 
     std::cout << "=== star_align test with LibRaw " << LibRaw::version() << " ===" << std::endl;
@@ -189,7 +170,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Found " << rawFiles.size() << " RAW files" << std::endl;
     std::cout << std::endl;
 
-    // Helper: keep only the brightest N stars for alignment
     auto keepBrightest = [](std::vector<StarAlign::Star>& stars, size_t maxCount) {
         if (stars.size() <= maxCount) return;
         std::partial_sort(stars.begin(), stars.begin() + maxCount, stars.end(),
@@ -203,7 +183,6 @@ int main(int argc, char* argv[]) {
 
     constexpr size_t MaxStarsForAlignment = 100;
 
-    // Process reference frame (first image)
     RawImage refImg;
     std::cout << "--- Reference frame ---" << std::endl;
     if (!loadRawToBGRA(rawFiles[0].string(), refImg)) {
@@ -224,7 +203,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Detected " << refStars.size() << " stars (threshold="
               << params.threshold << ")" << std::endl;
 
-    // Keep only brightest stars for alignment
     size_t origCount = refStars.size();
     keepBrightest(refStars, MaxStarsForAlignment);
     if (refStars.size() < origCount) {
@@ -236,7 +214,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Print top 5 stars
     int showCount = std::min(5, static_cast<int>(refStars.size()));
     std::cout << "Top " << showCount << " stars:" << std::endl;
     for (int i = 0; i < showCount; i++) {
@@ -250,10 +227,8 @@ int main(int argc, char* argv[]) {
 
     std::cout << std::endl;
 
-    // Alignment results table
     std::cout << "--- Alignment results ---" << std::endl;
 
-    // Print header
     std::cout << std::left << std::setw(40) << "File"
               << std::right << std::setw(7) << "Stars"
               << std::setw(5) << "OK"
@@ -267,9 +242,8 @@ int main(int argc, char* argv[]) {
     int totalCount = 0;
     double sumOffsetX = 0, sumOffsetY = 0, sumAngle = 0;
 
-    // Collect alignment results for stacking (frame 0 = reference)
     std::vector<StarAlign::AlignResult> allAlignments(rawFiles.size());
-    allAlignments[0].success = true;  // reference frame
+    allAlignments[0].success = true;
 
     for (size_t fi = 1; fi < rawFiles.size(); fi++) {
         RawImage tgtImg;
@@ -319,7 +293,6 @@ int main(int argc, char* argv[]) {
         std::cout << std::endl;
     }
 
-    // Summary
     std::cout << std::endl;
     std::cout << "--- Summary ---" << std::endl;
     std::cout << "Aligned: " << successCount << "/" << totalCount << " successful" << std::endl;
@@ -333,7 +306,6 @@ int main(int argc, char* argv[]) {
                   << (sumAngle / successCount * 180.0 / M_PI) << " degrees" << std::endl;
     }
 
-    // -------- Transform single frame mode --------
     if (transformFrame >= 1 && static_cast<size_t>(transformFrame) < rawFiles.size()) {
         const size_t fi = static_cast<size_t>(transformFrame);
         if (allAlignments[fi].success) {
@@ -354,10 +326,6 @@ int main(int argc, char* argv[]) {
                               << outPath << " ("
                               << tgtImg.width << "x" << tgtImg.height << " BGRA16, "
                               << transformed.size() * sizeof(uint16_t) << " bytes)" << std::endl;
-                    std::cout << "  offsetX=" << allAlignments[fi].offsetX
-                              << " offsetY=" << allAlignments[fi].offsetY
-                              << " angle=" << (allAlignments[fi].angle * 180.0 / M_PI) << " deg"
-                              << std::endl;
                 }
             }
         } else {
@@ -365,12 +333,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // -------- Stack mode --------
     if (!stackOutputPath.empty() && rawFiles.size() > 1) {
         std::cout << std::endl;
         std::cout << "--- Stacking BGRA16 images ---" << std::endl;
 
-        // Collect BGRA16 data from all frames
         std::vector<const uint16_t*> bgraPtrs;
         std::vector<std::vector<uint16_t>> bgraStorage(rawFiles.size());
 
