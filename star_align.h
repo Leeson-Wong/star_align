@@ -10,6 +10,12 @@
 
 namespace StarAlign {
 
+enum TransformationType {
+    TT_BILINEAR  = 0,
+    TT_BISQUARED = 1,
+    TT_BICUBIC   = 2
+};
+
 // -------- Detected star --------
 struct Star {
     double x = 0.0;            // Centroid position (pixel coordinates)
@@ -26,11 +32,13 @@ struct AlignResult {
     double  offsetY = 0.0;      // Center displacement Y (pixels, for display)
     double  angle = 0.0;        // Rotation angle (radians, for display)
     int     matchedStars = 0;   // Number of matched star pairs
-    // Bilinear transformation parameters (target -> reference mapping)
-    // refX = (a0 + a1*X + a2*Y + a3*X*Y) * width
-    // refY = (b0 + b1*X + b2*Y + b3*X*Y) * height
-    double a0 = 0, a1 = 1, a2 = 0, a3 = 0;
-    double b0 = 0, b1 = 0, b2 = 1, b3 = 0;
+    TransformationType transformType = TT_BILINEAR;
+    // Polynomial transformation coefficients (target -> reference mapping)
+    // Bilinear:  a[0..3], b[0..3] used  (1, X, Y, XY)
+    // Bisquared: a[0..8], b[0..8] used  (+ X², Y², X²Y, XY², X²Y²)
+    // Bicubic:   a[0..15], b[0..15] used (+ X³, Y³, X³Y, XY³, X³Y², X²Y³, X³Y³)
+    double a[16] = {};
+    double b[16] = {};
 };
 
 // -------- Star detection parameters --------
@@ -53,8 +61,8 @@ std::vector<Star> detectStars(
     const DetectParams& params = {}
 );
 
-// Compute bilinear transform from two star lists.
-// Bilinear params map target -> reference (identity by default for aligned frames).
+// Compute transformation from two star lists.
+// Automatically selects Bilinear/Bisquared/Bicubic based on number of matched stars.
 // offsetX/YoffsetY: center displacement in reference frame (for display).
 // angle:     rotation angle extracted from the mapped x-axis (for display).
 AlignResult computeAlignment(
@@ -73,11 +81,11 @@ AlignResult alignImages(
 
 // -------- BGRA16 image transform --------
 
-// Apply bilinear transformation to a BGRA16 image using AlignResult.
+// Apply polynomial transformation to a BGRA16 image using AlignResult.
 // For each output pixel (ox,oy), maps to source via:
-//   srcX = (a0 + a1*X + a2*Y + a3*X*Y) * width
-//   srcY = (b0 + b1*X + b2*Y + b3*X*Y) * height
-// where X = ox/width, Y = oy/height.
+//   X = ox/width, Y = oy/height
+//   srcX = (a[0] + a[1]*X + a[2]*Y + a[3]*XY + ... up to a[15]*X³Y³) * width
+//   srcY = (b[0] + b[1]*X + b[2]*Y + b[3]*XY + ... up to b[15]*X³Y³) * height
 // Out-of-bounds pixels are marked as opaque red (B=0,G=0,R=0xFFFF,A=0xFFFF).
 std::vector<uint16_t> transformBGRA(
     const uint16_t* srcBGRA, int width, int height, int stride,
