@@ -1118,11 +1118,21 @@ AlignResult computeAlignmentInternal(const std::vector<Star>& refStars,
     if (!ok)
         return result;
 
-    // Extract offsets from a0, b0
-    result.offsetX = params.a0 * fXWidth;
-    result.offsetY = params.b0 * fYHeight;
+    // Store bilinear params directly (used by transformBGRA for pixel-accurate mapping)
+    result.a0 = params.a0; result.a1 = params.a1;
+    result.a2 = params.a2; result.a3 = params.a3;
+    result.b0 = params.b0; result.b1 = params.b1;
+    result.b2 = params.b2; result.b3 = params.b3;
 
-    // Extract angle: transform (0,0) and (width,0), compute angle
+    // Report center displacement (for display / comparison with DSS)
+    const double cx = fXWidth / 2.0;
+    const double cy = fYHeight / 2.0;
+    double refCX, refCY;
+    params.transform(cx, cy, refCX, refCY);
+    result.offsetX = refCX - cx;
+    result.offsetY = refCY - cy;
+
+    // Report rotation angle (extracted from mapped x-axis)
     double pt1x, pt1y, pt2x, pt2y;
     params.transform(0, 0, pt1x, pt1y);
     params.transform(fXWidth, 0, pt2x, pt2y);
@@ -1228,7 +1238,7 @@ AlignResult alignImages(
 
 std::vector<uint16_t> transformBGRA(
     const uint16_t* srcBGRA, int width, int height, int stride,
-    double offsetX, double offsetY, double angle)
+    const AlignResult& alignment)
 {
     const size_t totalPixels = static_cast<size_t>(width) * static_cast<size_t>(height);
     std::vector<uint16_t> dstBGRA(totalPixels * 4, 0);
@@ -1237,33 +1247,31 @@ std::vector<uint16_t> transformBGRA(
         return dstBGRA;
 
     const int effectiveStride = (stride > 0) ? stride : (width * 4 * sizeof(uint16_t));
-    const double cx = width  / 2.0;
-    const double cy = height / 2.0;
-    const double cosA = std::cos(angle);
-    const double sinA = std::sin(angle);
+    const double fXWidth = static_cast<double>(width);
+    const double fYHeight = static_cast<double>(height);
 
     for (int oy = 0; oy < height; ++oy) {
         for (int ox = 0; ox < width; ++ox) {
-            // Inverse transform: output (ox,oy) -> source continuous coords
-            const double dx = ox - cx - offsetX;
-            const double dy = oy - cy - offsetY;
-            const double srcFX =  cosA * dx + sinA * dy + cx;
-            const double srcFY = -sinA * dx + cosA * dy + cy;
+            // Bilinear mapping: output (ox,oy) -> reference (srcFX, srcFY)
+            const double X = ox / fXWidth;
+            const double Y = oy / fYHeight;
+            const double srcFX = (alignment.a0 + alignment.a1 * X + alignment.a2 * Y + alignment.a3 * X * Y) * fXWidth;
+            const double srcFY = (alignment.b0 + alignment.b1 * X + alignment.b2 * Y + alignment.b3 * X * Y) * fYHeight;
 
             const size_t dstIdx = (static_cast<size_t>(oy) * width + ox) * 4;
 
-            if (srcFX >= 0.0 && srcFX < width && srcFY >= 0.0 && srcFY < height) {
+            if (srcFX >= 0.0 && srcFX < fXWidth && srcFY >= 0.0 && srcFY < fYHeight) {
                 // Valid source region: bilinear interpolation
                 dstBGRA[dstIdx + 0] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 0);
                 dstBGRA[dstIdx + 1] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 1);
                 dstBGRA[dstIdx + 2] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 2);
                 dstBGRA[dstIdx + 3] = 0xFFFF;
             } else {
-                // Out of bounds: red, alpha=0 marks invalid
+                // Out of bounds: opaque red mask
                 dstBGRA[dstIdx + 0] = 0;       // B
                 dstBGRA[dstIdx + 1] = 0;       // G
                 dstBGRA[dstIdx + 2] = 0xFFFF;  // R
-                dstBGRA[dstIdx + 3] = 0xFFFF;  // A (opaque red mask)
+                dstBGRA[dstIdx + 3] = 0xFFFF;  // A
             }
         }
     }
@@ -1302,8 +1310,7 @@ std::vector<uint16_t> stackBGRAImages(
         if (!alignments[f].success) continue;
 
         auto transformed = transformBGRA(images[f], width, height, effectiveStride,
-                                          alignments[f].offsetX, alignments[f].offsetY,
-                                          alignments[f].angle);
+                                          alignments[f]);
 
         for (size_t p = 0; p < totalPixels; ++p) {
             // Alpha != 0 means valid pixel

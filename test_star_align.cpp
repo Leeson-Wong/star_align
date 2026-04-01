@@ -342,8 +342,7 @@ int main(int argc, char* argv[]) {
                 int tgtStride = tgtImg.width * 4 * sizeof(uint16_t);
                 auto transformed = StarAlign::transformBGRA(
                     tgtImg.bgra.data(), tgtImg.width, tgtImg.height, tgtStride,
-                    allAlignments[fi].offsetX, allAlignments[fi].offsetY,
-                    allAlignments[fi].angle);
+                    allAlignments[fi]);
 
                 std::string outPath = rawFiles[fi].stem().string() + "_transformed.raw";
                 std::ofstream outFile(outPath, std::ios::binary);
