@@ -70,20 +70,10 @@ public:
 
 public:
 	constexpr explicit CStarDist(const size_t Star1, const size_t Star2, const float d) noexcept
-	{
-		if (Star1 < Star2)
-		{
-			m_Star1 = static_cast<decltype(m_Star1)>(Star1);
-			m_Star2 = static_cast<decltype(m_Star2)>(Star2);
-		}
-		else
-		{
-			m_Star1 = static_cast<decltype(m_Star1)>(Star2);
-			m_Star2 = static_cast<decltype(m_Star2)>(Star1);
-		}
-
-		m_fDistance = d;
-	}
+		: m_Star1{ static_cast<decltype(m_Star1)>(Star1 < Star2 ? Star1 : Star2) }
+		, m_Star2{ static_cast<decltype(m_Star2)>(Star1 < Star2 ? Star2 : Star1) }
+		, m_fDistance{ d }
+	{}
 
 	constexpr explicit CStarDist(const size_t star1, const size_t star2) noexcept : CStarDist(star1, star2, 0.0f) {}
 

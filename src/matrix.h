@@ -813,7 +813,7 @@ MAT_TEMPLATE inline void
 matrixT::Unit () _NO_THROW
 {
     if (_m->Refcnt > 1) clone();
-    size_t row = min(_m->Row,_m->Col);
+    size_t row = (std::min)(_m->Row,_m->Col);
     _m->Row = _m->Col = row;
 
     for (size_t i=0; i < _m->Row; i++)
