@@ -151,11 +151,15 @@ int main(int argc, char* argv[]) {
 
     std::string rawDir = argv[1];
     std::string stackOutputPath;
+    int transformFrame = -1;  // --transform <N>: output single transformed frame
 
-    // Parse --stack option
+    // Parse options
     for (int i = 2; i < argc; ++i) {
         if (std::string(argv[i]) == "--stack" && i + 1 < argc) {
             stackOutputPath = argv[i + 1];
+            ++i;
+        } else if (std::string(argv[i]) == "--transform" && i + 1 < argc) {
+            transformFrame = std::atoi(argv[i + 1]);
             ++i;
         }
     }
@@ -327,6 +331,39 @@ int main(int argc, char* argv[]) {
                   << (sumOffsetY / successCount) << ") pixels" << std::endl;
         std::cout << "Average rotation: "
                   << (sumAngle / successCount * 180.0 / M_PI) << " degrees" << std::endl;
+    }
+
+    // -------- Transform single frame mode --------
+    if (transformFrame >= 1 && static_cast<size_t>(transformFrame) < rawFiles.size()) {
+        const size_t fi = static_cast<size_t>(transformFrame);
+        if (allAlignments[fi].success) {
+            RawImage tgtImg;
+            if (loadRawToBGRA(rawFiles[fi].string(), tgtImg)) {
+                int tgtStride = tgtImg.width * 4 * sizeof(uint16_t);
+                auto transformed = StarAlign::transformBGRA(
+                    tgtImg.bgra.data(), tgtImg.width, tgtImg.height, tgtStride,
+                    allAlignments[fi].offsetX, allAlignments[fi].offsetY,
+                    allAlignments[fi].angle);
+
+                std::string outPath = rawFiles[fi].stem().string() + "_transformed.raw";
+                std::ofstream outFile(outPath, std::ios::binary);
+                if (outFile.is_open()) {
+                    outFile.write(reinterpret_cast<const char*>(transformed.data()),
+                                  transformed.size() * sizeof(uint16_t));
+                    outFile.close();
+                    std::cout << "Transformed frame " << transformFrame << " -> "
+                              << outPath << " ("
+                              << tgtImg.width << "x" << tgtImg.height << " BGRA16, "
+                              << transformed.size() * sizeof(uint16_t) << " bytes)" << std::endl;
+                    std::cout << "  offsetX=" << allAlignments[fi].offsetX
+                              << " offsetY=" << allAlignments[fi].offsetY
+                              << " angle=" << (allAlignments[fi].angle * 180.0 / M_PI) << " deg"
+                              << std::endl;
+                }
+            }
+        } else {
+            std::cerr << "Frame " << transformFrame << " alignment failed, cannot transform." << std::endl;
+        }
     }
 
     // -------- Stack mode --------

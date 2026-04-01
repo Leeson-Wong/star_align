@@ -1259,11 +1259,11 @@ std::vector<uint16_t> transformBGRA(
                 dstBGRA[dstIdx + 2] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 2);
                 dstBGRA[dstIdx + 3] = 0xFFFF;
             } else {
-                // Out of bounds: black, alpha=0 marks invalid
-                dstBGRA[dstIdx + 0] = 0;
-                dstBGRA[dstIdx + 1] = 0;
-                dstBGRA[dstIdx + 2] = 0;
-                dstBGRA[dstIdx + 3] = 0;
+                // Out of bounds: red, alpha=0 marks invalid
+                dstBGRA[dstIdx + 0] = 0;       // B
+                dstBGRA[dstIdx + 1] = 0;       // G
+                dstBGRA[dstIdx + 2] = 0xFFFF;  // R
+                dstBGRA[dstIdx + 3] = 0xFFFF;  // A (opaque red mask)
             }
         }
     }
@@ -1329,8 +1329,14 @@ std::vector<uint16_t> stackBGRAImages(
             result[base + 2] = static_cast<uint16_t>(std::min(65535.0, std::max(0.0,
                 std::round(accumulator[base + 2] * invCount))));
             result[base + 3] = 0xFFFF;
+        } else {
+            // No valid data: mark as pure red
+            const size_t base = p * 4;
+            result[base + 0] = 0;       // B
+            result[base + 1] = 0;       // G
+            result[base + 2] = 0xFFFF;  // R
+            result[base + 3] = 0xFFFF;  // A
         }
-        // else: remains (0, 0, 0, 0) — black, invalid
     }
 
     return result;
