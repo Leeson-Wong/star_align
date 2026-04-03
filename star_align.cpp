@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 #include <cstdio>
+#include <cstdlib>
 
 namespace StarAlign {
 
@@ -716,6 +717,31 @@ bool computeTransformation(const std::vector<VotingPair>& pairs,
     std::vector<double> M_cols(numCols * N);
     std::vector<double> rhsX(N), rhsY(N);
 
+    // [DEBUG] Log the coordinates entering the least squares fit
+    if (getenv("STAR_ALIGN_DEBUG")) {
+        fprintf(stderr, "[DEBUG] computeTransformation: type=%s N=%zu numCols=%zu fXWidth=%.1f fYHeight=%.1f\n",
+            ttype == TT_BICUBIC ? "BICUBIC" : ttype == TT_BISQUARED ? "BISQUARED" : ttype == TT_BILINEAR ? "BILINEAR" : "LINEAR",
+            N, numCols, fXWidth, fYWidth);
+        for (size_t i = 0; i < N; ++i) {
+            double rx, ry, tx, ty;
+            if (pairs[i].isCorner()) {
+                rx = pairs[i].cornerRefX; ry = pairs[i].cornerRefY;
+                tx = pairs[i].cornerTgtX; ty = pairs[i].cornerTgtY;
+            } else {
+                const Star& rs = refStars[pairs[i].refStar];
+                const Star& ts = tgtStars[pairs[i].tgtStar];
+                rx = rs.x; ry = rs.y;
+                tx = ts.x; ty = ts.y;
+            }
+            fprintf(stderr, "[DEBUG]   pair[%zu]: %s refStar=%d tgtStar=%d votes=%d ref=(%.4f, %.4f) tgt=(%.4f, %.4f) "
+                "rhsX=%.8f rhsY=%.8f X1=%.8f Y1=%.8f\n",
+                i, pairs[i].isCorner() ? "CORNER" : "STAR  ",
+                pairs[i].refStar, pairs[i].tgtStar, pairs[i].nrVotes,
+                rx, ry, tx, ty,
+                rx / fXWidth, ry / fYWidth, tx / fXWidth, ty / fYWidth);
+        }
+    }
+
     for (size_t i = 0; i < N; ++i) {
         double refX, refY, tgtX, tgtY;
         if (pairs[i].isCorner()) {
@@ -873,6 +899,18 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
             }
         }
 
+        // [DEBUG] Log pair selection
+        if (getenv("STAR_ALIGN_DEBUG")) {
+            const char* ttn = (TType == TT_BICUBIC) ? "BICUBIC" : (TType == TT_BISQUARED) ? "BISQUARED" : (TType == TT_BILINEAR) ? "BILINEAR" : "LINEAR";
+            int nrLocked = 0, nrCorners = 0;
+            for (const auto& p : vTestedPairs) {
+                if (p.isLocked()) ++nrLocked;
+                if (p.isCorner()) ++nrCorners;
+            }
+            fprintf(stderr, "[DEBUG] CoordTransform iter: TType=%s targetNrPairs=%zu gotNrPairs=%zu locked=%d corners=%d vWorking.size=%zu\n",
+                ttn, nrPairs, vTestedPairs.size(), nrLocked, nrCorners, vWorking.size());
+        }
+
         if (vTestedPairs.size() == nrPairs) {
             TransformParams projection;
             if (computeTransformation(vTestedPairs, refStars, tgtStars, fXWidth, fYHeight, TType, projection)) {
@@ -924,6 +962,18 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
                     vOkAddedPairs = vAddedPairs;
                     okTType = TType;
                     bResult = (TType == maxTType);
+
+                    // [DEBUG] Log successful stage
+                    if (getenv("STAR_ALIGN_DEBUG")) {
+                        const char* ttn = (TType == TT_BICUBIC) ? "BICUBIC" : (TType == TT_BISQUARED) ? "BISQUARED" : (TType == TT_BILINEAR) ? "BILINEAR" : "LINEAR";
+                        fprintf(stderr, "[DEBUG] CoordTransform: %s OK, maxDist=%.4f, willUpgrade=%s -> %s\n",
+                            ttn, fMaxDistance,
+                            (TType < maxTType) ? "yes" : "no",
+                            (TType < maxTType) ?
+                                (nextHigherTransformType(TType) == TT_BICUBIC ? "BICUBIC" :
+                                 nextHigherTransformType(TType) == TT_BISQUARED ? "BISQUARED" :
+                                 nextHigherTransformType(TType) == TT_BILINEAR ? "BILINEAR" : "?") : "FINAL");
+                    }
 
                     if (TType < maxTType) {
                         TType = nextHigherTransformType(TType);
@@ -1004,6 +1054,16 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
         vPairs = vTestedPairs;
     }
 
+    // [DEBUG] Log final coordinate transform result
+    if (bResult && getenv("STAR_ALIGN_DEBUG")) {
+        const char* ttn = (okTType == TT_BICUBIC) ? "BICUBIC" : (okTType == TT_BISQUARED) ? "BISQUARED" : (okTType == TT_BILINEAR) ? "BILINEAR" : "LINEAR";
+        fprintf(stderr, "[DEBUG] CoordTransform FINAL: type=%s pairs=%zu params: "
+            "a0=%.10f a1=%.10f a2=%.10f a3=%.10f b0=%.10f b1=%.10f b2=%.10f b3=%.10f\n",
+            ttn, vTestedPairs.size(),
+            outParams.a[0], outParams.a[1], outParams.a[2], outParams.a[3],
+            outParams.b[0], outParams.b[1], outParams.b[2], outParams.b[3]);
+    }
+
     return bResult;
 }
 
@@ -1015,13 +1075,26 @@ bool computeSigmaClippingTransformation(std::vector<VotingPair>& vPairs,
                                          double fXWidth, double fYHeight,
                                          TransformType ttype,
                                          TransformParams& params) {
+    // [DEBUG] Log input to sigma clipping
+    fprintf(stderr, "[DEBUG] SigmaClipping: inputPairs=%zu targetTType=%s fXWidth=%.1f fYHeight=%.1f\n",
+        vPairs.size(),
+        ttype == TT_BICUBIC ? "BICUBIC" : ttype == TT_BISQUARED ? "BISQUARED" : ttype == TT_BILINEAR ? "BILINEAR" : "LINEAR",
+        fXWidth, fYHeight);
+
     // Step 1: Compute a base transformation without corner locking using TT_BILINEAR
     TransformParams baseParams;
     std::vector<VotingPair> basePairs = vPairs;
     bool bResult = computeCoordinatesTransformation(basePairs, refStars, tgtStars, fXWidth, fYHeight, TT_BILINEAR, baseParams);
 
+    fprintf(stderr, "[DEBUG] SigmaClipping: base BILINEAR result=%s\n", bResult ? "OK" : "FAIL");
+
     if (!bResult)
         return false;
+
+    // [DEBUG] Log base BILINEAR params
+    fprintf(stderr, "[DEBUG] Base BILINEAR: a0=%.10f a1=%.10f a2=%.10f a3=%.10f b0=%.10f b1=%.10f b2=%.10f b3=%.10f\n",
+        baseParams.a[0], baseParams.a[1], baseParams.a[2], baseParams.a[3],
+        baseParams.b[0], baseParams.b[1], baseParams.b[2], baseParams.b[3]);
 
     // Step 2: Use base transformation to map the 4 target corners to reference coordinates
     const double w = fXWidth - 1.0;
@@ -1034,6 +1107,13 @@ bool computeSigmaClippingTransformation(std::vector<VotingPair>& vPairs,
     double refCorners[4][2];
     for (int c = 0; c < 4; ++c)
         baseParams.transform(tgtCorners[c][0], tgtCorners[c][1], refCorners[c][0], refCorners[c][1]);
+
+    // [DEBUG] Log corner pairs
+    fprintf(stderr, "[DEBUG] Corner locking: fXWidth=%.1f fYHeight=%.1f\n", fXWidth, fYHeight);
+    for (int c = 0; c < 4; ++c) {
+        fprintf(stderr, "[DEBUG]   Corner[%d]: tgt=(%.4f, %.4f) -> ref=(%.4f, %.4f)\n",
+            c, tgtCorners[c][0], tgtCorners[c][1], refCorners[c][0], refCorners[c][1]);
+    }
 
     // Step 3: Add corner pairs with very high votes
     std::vector<VotingPair> cornerPairs = vPairs;
@@ -1086,6 +1166,7 @@ bool computeLargeTriangleTransformation(const std::vector<Star>& refStars,
     initVotingGrid(vVotingPairs, refStars.size(), tgtStars.size());
 
     // Dual-pointer scan for matching distances
+    int debugDistMatches = 0;  // [DEBUG] count matching distance pairs
     for (size_t ti = 0, ri = 0; ti < tgtDists.size() && ri < refDists.size();) {
         const auto& td = tgtDists[tgtIndices[ti]];
         const auto& rd = refDists[refIndices[ri]];
@@ -1093,6 +1174,7 @@ bool computeLargeTriangleTransformation(const std::vector<Star>& refStars,
         const float refDist = rd.distance;
 
         if (std::fabs(tgtDist - refDist) <= static_cast<float>(MaxStarDistanceDelta)) {
+            ++debugDistMatches;  // [DEBUG]
             const int lRefStar1 = rd.star1;
             const int lRefStar2 = rd.star2;
             const int lTgtStar1 = td.star1;
@@ -1137,15 +1219,34 @@ bool computeLargeTriangleTransformation(const std::vector<Star>& refStars,
         return a.nrVotes > b.nrVotes; // descending
     });
 
+    // [DEBUG] Log voting stats
+    {
+        int maxVotes = vVotingPairs.empty() ? 0 : vVotingPairs[0].nrVotes;
+        int minVotes = vVotingPairs.empty() ? 0 : vVotingPairs.back().nrVotes;
+        int top10Votes = (vVotingPairs.size() >= 10) ? vVotingPairs[9].nrVotes : minVotes;
+        fprintf(stderr, "[DEBUG] LargeTriangle: distMatches=%d totalPairs=%zu maxVotes=%d top10Votes=%d minVotes=%d\n",
+            debugDistMatches, vVotingPairs.size(), maxVotes, top10Votes, minVotes);
+        // Print top 5 pairs for debugging
+        for (int i = 0; i < std::min(static_cast<size_t>(5), vVotingPairs.size()); ++i) {
+            fprintf(stderr, "[DEBUG]   votePair[%d]: refStar=%d tgtStar=%d votes=%d\n",
+                i, vVotingPairs[i].refStar, vVotingPairs[i].tgtStar, vVotingPairs[i].nrVotes);
+        }
+    }
+
     bool bResult = false;
     if (vVotingPairs.size() >= tgtStars.size()) {
         int lMinNrVotes = vVotingPairs[std::min(static_cast<size_t>(tgtStars.size() * 2 - 1), vVotingPairs.size() - 1)].nrVotes;
         if (lMinNrVotes == 0) lMinNrVotes = 1;
 
+        fprintf(stderr, "[DEBUG] LargeTriangle: minNrVotes=%d (from index %d), totalBefore=%zu\n",
+            lMinNrVotes, std::min(static_cast<size_t>(tgtStars.size() * 2 - 1), vVotingPairs.size() - 1), vVotingPairs.size());
+
         size_t lCut = 0;
         while (lCut < vVotingPairs.size() && vVotingPairs[lCut].nrVotes >= lMinNrVotes)
             ++lCut;
         vVotingPairs.resize(lCut + 1);
+
+        fprintf(stderr, "[DEBUG] LargeTriangle: after cut, kept %zu pairs\n", vVotingPairs.size());
 
         const TransformType ttype = getTransformType(vVotingPairs.size());
         const char* ttypeName = (ttype == TT_BICUBIC) ? "BICUBIC" : (ttype == TT_BISQUARED) ? "BISQUARED" : (ttype == TT_BILINEAR) ? "BILINEAR" : "LINEAR";
