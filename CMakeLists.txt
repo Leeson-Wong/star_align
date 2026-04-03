@@ -7,7 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #add_library(star_align STATIC star_align.cpp star_align.h)
 #target_include_directories(star_align PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_library(dss STATIC dss/RegisterEngine.cpp)
+file(GLOB_RECURSE DSS_SOURCES "dss/*.cpp")
+add_library(dss STATIC ${DSS_SOURCES})
 target_include_directories(dss PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/dss)
 
 add_subdirectory(libraw)
