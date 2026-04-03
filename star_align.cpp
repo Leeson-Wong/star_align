@@ -13,6 +13,7 @@
 #include <numeric>
 #include <utility>
 #include <vector>
+#include <cstdio>
 
 namespace StarAlign {
 
@@ -170,22 +171,46 @@ struct PixelDirection {
     int nrBrighterPixels = 0;
 };
 
+// ---- Transform type ----
+
+enum TransformType {
+    TT_LINEAR     = 0,
+    TT_BILINEAR   = 1,
+    TT_BISQUARED  = 2,
+    TT_BICUBIC    = 3,
+};
+
+inline TransformType nextHigherTransformType(TransformType tt) {
+    return static_cast<TransformType>(static_cast<int>(tt) + 1);
+}
+
+constexpr int MINPAIRSTOBISQUARED = 25;
+constexpr int MINPAIRSTOBICUBIC   = 40;
+
+TransformType getTransformType(size_t nrVotingPairs) {
+    // Automatic mode (always 0 in star_align)
+    if (nrVotingPairs >= static_cast<size_t>(MINPAIRSTOBICUBIC))
+        return TT_BICUBIC;
+    if (nrVotingPairs >= static_cast<size_t>(MINPAIRSTOBISQUARED))
+        return TT_BISQUARED;
+    return TT_BILINEAR;
+}
+
 // ---- Matrix inversion helpers ----
 
-// Invert a 4x4 matrix using Gauss-Jordan elimination.
-// mat is modified in-place. Returns true on success.
-bool invert4x4(double mat[4][4]) {
-    constexpr int N = 4;
-    double inv[N][N] = {};
-    for (int i = 0; i < N; ++i) inv[i][i] = 1.0;
+// Invert an NxN matrix using Gauss-Jordan elimination (column-major).
+// mat is N*N doubles, modified in-place. Returns true on success.
+bool invertNxN(double* mat, size_t N) {
+    std::vector<double> inv(N * N, 0.0);
+    for (size_t i = 0; i < N; ++i) inv[i * N + i] = 1.0;
 
-    for (int col = 0; col < N; ++col) {
+    for (size_t col = 0; col < N; ++col) {
         // Find pivot
-        int pivotRow = col;
-        double pivotVal = std::abs(mat[col][col]);
-        for (int row = col + 1; row < N; ++row) {
-            if (std::abs(mat[row][col]) > pivotVal) {
-                pivotVal = std::abs(mat[row][col]);
+        size_t pivotRow = col;
+        double pivotVal = std::abs(mat[col * N + col]);
+        for (size_t row = col + 1; row < N; ++row) {
+            if (std::abs(mat[row * N + col]) > pivotVal) {
+                pivotVal = std::abs(mat[row * N + col]);
                 pivotRow = row;
             }
         }
@@ -193,93 +218,122 @@ bool invert4x4(double mat[4][4]) {
 
         // Swap rows
         if (pivotRow != col) {
-            for (int j = 0; j < N; ++j) {
-                std::swap(mat[col][j], mat[pivotRow][j]);
-                std::swap(inv[col][j], inv[pivotRow][j]);
+            for (size_t j = 0; j < N; ++j) {
+                std::swap(mat[col * N + j], mat[pivotRow * N + j]);
+                std::swap(inv[col * N + j], inv[pivotRow * N + j]);
             }
         }
 
         // Scale pivot row
-        const double scale = mat[col][col];
-        for (int j = 0; j < N; ++j) {
-            mat[col][j] /= scale;
-            inv[col][j] /= scale;
+        const double scale = mat[col * N + col];
+        for (size_t j = 0; j < N; ++j) {
+            mat[col * N + j] /= scale;
+            inv[col * N + j] /= scale;
         }
 
         // Eliminate column
-        for (int row = 0; row < N; ++row) {
+        for (size_t row = 0; row < N; ++row) {
             if (row == col) continue;
-            const double factor = mat[row][col];
-            for (int j = 0; j < N; ++j) {
-                mat[row][j] -= factor * mat[col][j];
-                inv[row][j] -= factor * inv[col][j];
+            const double factor = mat[row * N + col];
+            for (size_t j = 0; j < N; ++j) {
+                mat[row * N + j] -= factor * mat[col * N + j];
+                inv[row * N + j] -= factor * inv[col * N + j];
             }
         }
     }
     // Copy result back
-    for (int i = 0; i < N; ++i)
-        for (int j = 0; j < N; ++j)
-            mat[i][j] = inv[i][j];
+    for (size_t i = 0; i < N * N; ++i)
+        mat[i] = inv[i];
     return true;
 }
 
-// Solve least squares: (M^T M) result = M^T rhs, where M is Nx4.
-// result is 4-element vector. Returns true on success.
-bool solveLeastSquares4(const std::vector<double>& M_col0,
-                        const std::vector<double>& M_col1,
-                        const std::vector<double>& M_col2,
-                        const std::vector<double>& M_col3,
-                        const std::vector<double>& rhs,
-                        double result[4]) {
-    const size_t N = M_col0.size();
-
-    // Compute M^T M (4x4 symmetric)
-    double MTM[4][4] = {};
-    const double* cols[4] = { M_col0.data(), M_col1.data(), M_col2.data(), M_col3.data() };
-    for (int i = 0; i < 4; ++i) {
-        for (int j = i; j < 4; ++j) {
+// Generic least squares: (M^T M) result = M^T rhs, where M is numRows x numCols.
+// M_cols is column-major: M_cols[col * numRows + row].
+// result is numCols-element vector. Returns true on success.
+bool solveLeastSquares(const double* M_cols, size_t numRows, size_t numCols,
+                       const double* rhs, double* result) {
+    // Compute M^T M (numCols x numCols, column-major)
+    std::vector<double> MTM(numCols * numCols, 0.0);
+    for (size_t i = 0; i < numCols; ++i) {
+        const double* colI = M_cols + i * numRows;
+        for (size_t j = i; j < numCols; ++j) {
+            const double* colJ = M_cols + j * numRows;
             double sum = 0.0;
-            for (size_t k = 0; k < N; ++k)
-                sum += cols[i][k] * cols[j][k];
-            MTM[i][j] = sum;
-            MTM[j][i] = sum;
+            for (size_t k = 0; k < numRows; ++k)
+                sum += colI[k] * colJ[k];
+            MTM[i * numCols + j] = sum;
+            MTM[j * numCols + i] = sum;
         }
     }
 
-    // Compute M^T rhs (4x1)
-    double MTRhs[4] = {};
-    for (int i = 0; i < 4; ++i) {
+    // Compute M^T rhs (numCols x 1)
+    std::vector<double> MTRhs(numCols, 0.0);
+    for (size_t i = 0; i < numCols; ++i) {
+        const double* colI = M_cols + i * numRows;
         double sum = 0.0;
-        for (size_t k = 0; k < N; ++k)
-            sum += cols[i][k] * rhs[k];
+        for (size_t k = 0; k < numRows; ++k)
+            sum += colI[k] * rhs[k];
         MTRhs[i] = sum;
     }
 
     // Invert M^T M
-    if (!invert4x4(MTM)) return false;
+    if (!invertNxN(MTM.data(), numCols)) return false;
 
     // result = (M^T M)^{-1} M^T rhs
-    for (int i = 0; i < 4; ++i) {
+    for (size_t i = 0; i < numCols; ++i) {
         result[i] = 0.0;
-        for (int j = 0; j < 4; ++j)
-            result[i] += MTM[i][j] * MTRhs[j];
+        for (size_t j = 0; j < numCols; ++j)
+            result[i] += MTM[i * numCols + j] * MTRhs[j];
     }
     return true;
 }
 
-// ---- Bilinear parameters ----
+// ---- Transform parameters ----
 
-struct BilinearParams {
-    double a0 = 0, a1 = 0, a2 = 0, a3 = 0;
-    double b0 = 0, b1 = 0, b2 = 0, b3 = 0;
+struct TransformParams {
+    double a[16] = {};
+    double b[16] = {};
     double fXWidth = 1.0, fYWidth = 1.0;
+    TransformType type = TT_BILINEAR;
+
+    TransformParams() {
+        a[1] = 1.0; // x' = x
+        b[2] = 1.0; // y' = y
+    }
 
     // Transform a target point to reference coordinates
     void transform(double tgtX, double tgtY, double& refX, double& refY) const {
         const double X = tgtX / fXWidth;
         const double Y = tgtY / fYWidth;
-        refX = (a0 + a1 * X + a2 * Y + a3 * X * Y) * fXWidth;
-        refY = (b0 + b1 * X + b2 * Y + b3 * X * Y) * fYWidth;
+
+        if (type == TT_BICUBIC) {
+            const double X2 = X * X;
+            const double X3 = X * X * X;
+            const double Y2 = Y * Y;
+            const double Y3 = Y * Y * Y;
+
+            refX = a[0] + a[1]*X + a[2]*Y + a[3]*X*Y
+                 + a[4]*X2 + a[5]*Y2 + a[6]*X2*Y + a[7]*X*Y2 + a[8]*X2*Y2
+                 + a[9]*X3 + a[10]*Y3 + a[11]*X3*Y + a[12]*X*Y3 + a[13]*X3*Y2 + a[14]*X2*Y3 + a[15]*X3*Y3;
+            refY = b[0] + b[1]*X + b[2]*Y + b[3]*X*Y
+                 + b[4]*X2 + b[5]*Y2 + b[6]*X2*Y + b[7]*X*Y2 + b[8]*X2*Y2
+                 + b[9]*X3 + b[10]*Y3 + b[11]*X3*Y + b[12]*X*Y3 + b[13]*X3*Y2 + b[14]*X2*Y3 + b[15]*X3*Y3;
+        } else if (type == TT_BISQUARED) {
+            const double X2 = X * X;
+            const double Y2 = Y * Y;
+
+            refX = a[0] + a[1]*X + a[2]*Y + a[3]*X*Y
+                 + a[4]*X2 + a[5]*Y2 + a[6]*X2*Y + a[7]*X*Y2 + a[8]*X2*Y2;
+            refY = b[0] + b[1]*X + b[2]*Y + b[3]*X*Y
+                 + b[4]*X2 + b[5]*Y2 + b[6]*X2*Y + b[7]*X*Y2 + b[8]*X2*Y2;
+        } else {
+            // TT_BILINEAR (and TT_LINEAR)
+            refX = a[0] + a[1]*X + a[2]*Y + a[3]*X*Y;
+            refY = b[0] + b[1]*X + b[2]*Y + b[3]*X*Y;
+        }
+
+        refX *= fXWidth;
+        refY *= fYWidth;
     }
 };
 
@@ -383,6 +437,9 @@ std::vector<Star> detectStarsInternal(const std::vector<double>& gray, int width
     const double backgroundLevel = static_cast<double>(fiftyPercentQuantile) / static_cast<double>(HistoSize);
     const double bgLevel256 = backgroundLevel * 256.0; // [0, 256) scale
     const double intensityThreshold = 256.0 * detectionThreshold + bgLevel256;
+
+    fprintf(stderr, "[star_align] detectStarsInternal: width=%d height=%d threshold=%.6f maxIntensity=%.4f bgLevel256=%.4f intensityThreshold=%.4f\n",
+            width, height, detectionThreshold, maxIntensity, bgLevel256, intensityThreshold);
 
     if (maxIntensity < intensityThreshold)
         return stars;
@@ -567,6 +624,8 @@ std::vector<Star> detectStarsInternal(const std::vector<double>& gray, int width
         } // for j
     } // for deltaRadius
 
+    fprintf(stderr, "[star_align] detectStarsInternal DONE: totalStars=%zu\n", stars.size());
+
     return stars;
 }
 
@@ -642,16 +701,20 @@ std::vector<StarTriangle> computeTriangles(const std::vector<Star>& stars) {
     return triangles;
 }
 
-// Compute transformation using bilinear least squares
+// Compute transformation using least squares for the given transform type
 bool computeTransformation(const std::vector<VotingPair>& pairs,
                            const std::vector<Star>& refStars,
                            const std::vector<Star>& tgtStars,
                            double fXWidth, double fYWidth,
-                           BilinearParams& params) {
+                           TransformType ttype,
+                           TransformParams& params) {
     const size_t N = pairs.size();
-    if (N < 4) return false;
+    const size_t numCols = (ttype == TT_BICUBIC) ? 16 : (ttype == TT_BISQUARED) ? 9 : 4;
+    if (N < numCols) return false;
 
-    std::vector<double> M0(N), M1(N), M2(N), M3(N), rhsX(N), rhsY(N);
+    // Column-major matrix: M_cols[col * N + row]
+    std::vector<double> M_cols(numCols * N);
+    std::vector<double> rhsX(N), rhsY(N);
 
     for (size_t i = 0; i < N; ++i) {
         double refX, refY, tgtX, tgtY;
@@ -670,32 +733,64 @@ bool computeTransformation(const std::vector<VotingPair>& pairs,
 
         const double X1 = tgtX / fXWidth;
         const double Y1 = tgtY / fYWidth;
-        M0[i] = 1.0;
-        M1[i] = X1;
-        M2[i] = Y1;
-        M3[i] = X1 * Y1;
+
+        // Base functions common to all types
+        M_cols[0 * N + i] = 1.0;
+        M_cols[1 * N + i] = X1;
+        M_cols[2 * N + i] = Y1;
+        M_cols[3 * N + i] = X1 * Y1;
+
+        if (numCols >= 9) {
+            const double X2 = X1 * X1;
+            const double Y2 = Y1 * Y1;
+            M_cols[4 * N + i] = X2;
+            M_cols[5 * N + i] = Y2;
+            M_cols[6 * N + i] = X2 * Y1;
+            M_cols[7 * N + i] = X1 * Y2;
+            M_cols[8 * N + i] = X2 * Y2;
+        }
+        if (numCols >= 16) {
+            const double X2 = X1 * X1;
+            const double X3 = X2 * X1;
+            const double Y2 = Y1 * Y1;
+            const double Y3 = Y2 * Y1;
+            M_cols[9  * N + i] = X3;
+            M_cols[10 * N + i] = Y3;
+            M_cols[11 * N + i] = X3 * Y1;
+            M_cols[12 * N + i] = X1 * Y3;
+            M_cols[13 * N + i] = X3 * Y2;
+            M_cols[14 * N + i] = X2 * Y3;
+            M_cols[15 * N + i] = X3 * Y3;
+        }
     }
 
-    double A[4], B[4];
-    if (!solveLeastSquares4(M0, M1, M2, M3, rhsX, A)) return false;
-    if (!solveLeastSquares4(M0, M1, M2, M3, rhsY, B)) return false;
+    std::vector<double> A(numCols), B(numCols);
+    if (!solveLeastSquares(M_cols.data(), N, numCols, rhsX.data(), A.data())) return false;
+    if (!solveLeastSquares(M_cols.data(), N, numCols, rhsY.data(), B.data())) return false;
 
-    params.a0 = A[0]; params.a1 = A[1]; params.a2 = A[2]; params.a3 = A[3];
-    params.b0 = B[0]; params.b1 = B[1]; params.b2 = B[2]; params.b3 = B[3];
+    for (size_t i = 0; i < 16; ++i) {
+        params.a[i] = (i < numCols) ? A[i] : 0.0;
+        params.b[i] = (i < numCols) ? B[i] : 0.0;
+    }
     params.fXWidth = fXWidth;
     params.fYWidth = fYWidth;
+    params.type = ttype;
     return true;
 }
 
-// Compute max distance between projected target stars and reference stars
+// Compute max distance between projected target stars and reference stars.
+// Only non-corner pairs contribute to distances (for sigma clipping).
+// nonCornerIndices maps each distance to its index in the pairs vector.
 std::pair<double, size_t> computeDistances(const std::vector<VotingPair>& pairs,
                                             const std::vector<Star>& refStars,
                                             const std::vector<Star>& tgtStars,
-                                            const BilinearParams& params,
-                                            std::vector<double>& distances) {
+                                            const TransformParams& params,
+                                            std::vector<double>& distances,
+                                            std::vector<size_t>& nonCornerIndices) {
     double maxDist = 0.0;
     size_t maxIdx = 0;
     distances.clear();
+    nonCornerIndices.clear();
 
     for (size_t i = 0; i < pairs.size(); ++i) {
         double tgtX, tgtY, refX, refY;
@@ -711,7 +806,12 @@ std::pair<double, size_t> computeDistances(const std::vector<VotingPair>& pairs,
         double projRefX, projRefY;
         params.transform(tgtX, tgtY, projRefX, projRefY);
         const double dist = Distance(projRefX, projRefY, refX, refY);
-        distances.push_back(dist);
+
+        if (!pairs[i].isCorner()) {
+            distances.push_back(dist);
+            nonCornerIndices.push_back(i);
+        }
+
         if (dist > maxDist) {
             maxDist = dist;
             maxIdx = i;
@@ -723,42 +823,49 @@ std::pair<double, size_t> computeDistances(const std::vector<VotingPair>& pairs,
 std::pair<double, size_t> computeMaxDistance(const std::vector<VotingPair>& pairs,
                                               const std::vector<Star>& refStars,
                                               const std::vector<Star>& tgtStars,
-                                              const BilinearParams& params) {
+                                              const TransformParams& params) {
     std::vector<double> dummy;
-    return computeDistances(pairs, refStars, tgtStars, params, dummy);
+    std::vector<size_t> dummyIdx;
+    return computeDistances(pairs, refStars, tgtStars, params, dummy, dummyIdx);
 }
 
-// ---- ComputeCoordinatesTransformation (simplified) ----
+// ---- ComputeCoordinatesTransformation with progressive upgrade ----
 
 bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
                                       const std::vector<Star>& refStars,
                                       const std::vector<Star>& tgtStars,
                                       double fXWidth, double fYHeight,
-                                      BilinearParams& outParams) {
+                                      TransformType maxTType,
+                                      TransformParams& outParams) {
     bool bResult = false;
     bool bEnd = false;
-    BilinearParams okTransformation;
+    TransformType TType = TT_BILINEAR;
+    TransformType okTType = TT_LINEAR;
+
+    TransformParams okTransformation;
     std::vector<int> vAddedPairs;
     std::vector<int> vOkAddedPairs;
     std::vector<VotingPair> vTestedPairs;
     std::vector<VotingPair> vOkPairs;
     std::vector<VotingPair> vWorking = vPairs;
 
+    const size_t nrExtraPairs = (!vPairs.empty() && vPairs[0].isCorner()) ? 4 : 0;
+
     while (!bEnd && !bResult) {
-        constexpr size_t nrPairs = 8;
+        const size_t nrPairs = nrExtraPairs + (TType == TT_BICUBIC ? 32 : (TType == TT_BISQUARED ? 18 : 8));
 
         vAddedPairs.clear();
         vTestedPairs.clear();
 
-        // Add locked pairs first
-        for (int idx = 0; idx < static_cast<int>(vWorking.size()); ++idx) {
-            if (vWorking[idx].isActive() && vWorking[idx].isLocked()) {
-                vTestedPairs.push_back(vWorking[idx]);
-                vAddedPairs.push_back(idx);
+        // First add the locked pairs
+        for (int i = 0; i < static_cast<int>(vWorking.size()); ++i) {
+            if (vWorking[i].isActive() && vWorking[i].isLocked()) {
+                vTestedPairs.push_back(vWorking[i]);
+                vAddedPairs.push_back(i);
             }
         }
 
-        // Add other active pairs up to limit
+        // Then add the other pairs up to the limit
         for (size_t i = 0; i < vWorking.size() && vTestedPairs.size() < nrPairs; ++i) {
             if (vWorking[i].isActive() && !vWorking[i].isLocked()) {
                 vTestedPairs.push_back(vWorking[i]);
@@ -767,53 +874,76 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
         }
 
         if (vTestedPairs.size() == nrPairs) {
-            BilinearParams projection;
-            if (computeTransformation(vTestedPairs, refStars, tgtStars, fXWidth, fYHeight, projection)) {
+            TransformParams projection;
+            if (computeTransformation(vTestedPairs, refStars, tgtStars, fXWidth, fYHeight, TType, projection)) {
                 std::vector<double> vDistances;
+                std::vector<size_t> nonCornerIndices;
                 const auto [fMaxDistance, maxDistanceIndex] = computeDistances(
-                    vTestedPairs, refStars, tgtStars, projection, vDistances);
+                    vTestedPairs, refStars, tgtStars, projection, vDistances, nonCornerIndices);
 
                 if (fMaxDistance > 3.0) {
                     // Sigma clipping to deactivate outliers
+                    // vDistances and nonCornerIndices are parallel, containing only non-corner entries
                     const double fAverage = Average(vDistances);
                     const double fSigma = Sigma(vDistances);
                     bool bOneDeactivated = false;
 
                     for (size_t i = 0; i < vDistances.size(); ++i) {
-                        if (vWorking[vAddedPairs[i]].isCorner()) continue;
                         if (std::abs(vDistances[i] - fAverage) > 2.0 * fSigma) {
-                            vWorking[vAddedPairs[i]].setActive(false);
+                            const size_t pairIdx = nonCornerIndices[i];
+                            const int lDeactivatedIndice = vAddedPairs[pairIdx];
+                            vWorking[lDeactivatedIndice].setActive(false);
                             if (vDistances[i] < 7.0)
-                                vWorking[vAddedPairs[i]].setPossible(true);
+                                vWorking[lDeactivatedIndice].setPossible(true);
                             bOneDeactivated = true;
                         }
                     }
 
                     if (!bOneDeactivated) {
                         for (size_t i = 0; i < vDistances.size(); ++i) {
-                            if (vWorking[vAddedPairs[i]].isCorner()) continue;
                             if (std::abs(vDistances[i] - fAverage) > fSigma) {
-                                vWorking[vAddedPairs[i]].setActive(false);
+                                const size_t pairIdx = nonCornerIndices[i];
+                                const int lDeactivatedIndice = vAddedPairs[pairIdx];
+                                vWorking[lDeactivatedIndice].setActive(false);
                                 bOneDeactivated = true;
                             }
                         }
                     }
 
                     if (!bOneDeactivated) {
-                        if (!vWorking[vAddedPairs[maxDistanceIndex]].isCorner())
-                            vWorking[vAddedPairs[maxDistanceIndex]].setActive(false);
+                        // maxDistanceIndex is index into vTestedPairs (includes corners)
+                        const int lDeactivatedIndice = vAddedPairs[maxDistanceIndex];
+                        if (!vWorking[lDeactivatedIndice].isCorner()) {
+                            vWorking[lDeactivatedIndice].setActive(false);
+                        }
                     }
                 } else {
                     // Good transformation found
                     okTransformation = projection;
                     vOkPairs = vTestedPairs;
                     vOkAddedPairs = vAddedPairs;
-                    bResult = true;
+                    okTType = TType;
+                    bResult = (TType == maxTType);
+
+                    if (TType < maxTType) {
+                        TType = nextHigherTransformType(TType);
+
+                        // All the possible pairs are active again
+                        for (auto& votingPair : vWorking) {
+                            if (votingPair.isPossible()) {
+                                votingPair.setActive(true);
+                                votingPair.setPossible(false);
+                            }
+                        }
+
+                        // Lock the pairs
+                        for (const size_t index : vAddedPairs)
+                            vWorking[index].setLocked(true);
+                    }
                 }
             } else {
                 // Transformation failed - remove last pair
-                if (!vAddedPairs.empty())
-                    vWorking[vAddedPairs[nrPairs - 1]].setActive(false);
+                vWorking[vAddedPairs[nrPairs - 1]].setActive(false);
             }
         } else {
             bEnd = true;
@@ -824,10 +954,11 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
         bResult = true;
 
     if (bResult) {
-        // Try to add more pairs to refine
+        // Try to add more pairs to refine using okTType
         outParams = okTransformation;
         vTestedPairs = vOkPairs;
         vAddedPairs = vOkAddedPairs;
+        TType = okTType;
 
         for (const auto idx : vAddedPairs)
             vPairs[idx].setUsed(true);
@@ -848,8 +979,8 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
             }
 
             if (lAddedPair >= 0) {
-                BilinearParams projection;
-                if (computeTransformation(vTempPairs, refStars, tgtStars, fXWidth, fYHeight, projection)) {
+                TransformParams projection;
+                if (computeTransformation(vTempPairs, refStars, tgtStars, fXWidth, fYHeight, TType, projection)) {
                     const double maxDist = computeMaxDistance(vTempPairs, refStars, tgtStars, projection).first;
                     if (maxDist <= 2.0) {
                         vTestedPairs = vTempPairs;
@@ -882,11 +1013,12 @@ bool computeSigmaClippingTransformation(std::vector<VotingPair>& vPairs,
                                          const std::vector<Star>& refStars,
                                          const std::vector<Star>& tgtStars,
                                          double fXWidth, double fYHeight,
-                                         BilinearParams& params) {
-    // Step 1: Compute a base transformation without corner locking
-    BilinearParams baseParams;
+                                         TransformType ttype,
+                                         TransformParams& params) {
+    // Step 1: Compute a base transformation without corner locking using TT_BILINEAR
+    TransformParams baseParams;
     std::vector<VotingPair> basePairs = vPairs;
-    bool bResult = computeCoordinatesTransformation(basePairs, refStars, tgtStars, fXWidth, fYHeight, baseParams);
+    bool bResult = computeCoordinatesTransformation(basePairs, refStars, tgtStars, fXWidth, fYHeight, TT_BILINEAR, baseParams);
 
     if (!bResult)
         return false;
@@ -914,8 +1046,8 @@ bool computeSigmaClippingTransformation(std::vector<VotingPair>& vPairs,
     std::sort(cornerPairs.begin(), cornerPairs.end(),
         [](const VotingPair& a, const VotingPair& b) { return a.nrVotes > b.nrVotes; });
 
-    // Step 4: Compute final transformation with corners locked
-    bResult = computeCoordinatesTransformation(cornerPairs, refStars, tgtStars, fXWidth, fYHeight, params);
+    // Step 4: Compute final transformation with corners locked using target transform type
+    bResult = computeCoordinatesTransformation(cornerPairs, refStars, tgtStars, fXWidth, fYHeight, ttype, params);
 
     if (bResult) {
         // Remove corner pairs from final output
@@ -935,7 +1067,7 @@ bool computeSigmaClippingTransformation(std::vector<VotingPair>& vPairs,
 bool computeLargeTriangleTransformation(const std::vector<Star>& refStars,
                                          const std::vector<Star>& tgtStars,
                                          double fXWidth, double fYHeight,
-                                         BilinearParams& params) {
+                                         TransformParams& params) {
     const auto refDists = computeStarDistances(refStars);
     const auto tgtDists = computeStarDistances(tgtStars);
 
@@ -1015,17 +1147,22 @@ bool computeLargeTriangleTransformation(const std::vector<Star>& refStars,
             ++lCut;
         vVotingPairs.resize(lCut + 1);
 
-        bResult = computeSigmaClippingTransformation(vVotingPairs, refStars, tgtStars, fXWidth, fYHeight, params);
+        const TransformType ttype = getTransformType(vVotingPairs.size());
+        const char* ttypeName = (ttype == TT_BICUBIC) ? "BICUBIC" : (ttype == TT_BISQUARED) ? "BISQUARED" : (ttype == TT_BILINEAR) ? "BILINEAR" : "LINEAR";
+        fprintf(stderr, "[star_align] LargeTriangle: votingPairs=%zu type=%s\n", vVotingPairs.size(), ttypeName);
+
+        bResult = computeSigmaClippingTransformation(vVotingPairs, refStars, tgtStars, fXWidth, fYHeight, ttype, params);
 
         // If successful and a3/b3 are negligible, zero them out for linear case
         if (bResult) {
-            if (std::abs(params.a3) < 1e-10 && std::abs(params.b3) < 1e-10) {
-                params.a3 = 0;
-                params.b3 = 0;
+            if (std::abs(params.a[3]) < 1e-10 && std::abs(params.b[3]) < 1e-10) {
+                params.a[3] = 0;
+                params.b[3] = 0;
             }
         }
     }
 
+    fprintf(stderr, "[star_align] LargeTriangle result: %s\n", bResult ? "SUCCESS" : "FAILED");
     return bResult;
 }
 
@@ -1035,7 +1172,7 @@ bool computeMatchingTriangleTransformation(const std::vector<StarTriangle>& refT
                                              const std::vector<Star>& refStars,
                                              const std::vector<Star>& tgtStars,
                                              double fXWidth, double fYHeight,
-                                             BilinearParams& params) {
+                                             TransformParams& params) {
     const auto tgtTriangles = computeTriangles(tgtStars);
 
     std::vector<VotingPair> vVotingPairs;
@@ -1080,12 +1217,13 @@ bool computeMatchingTriangleTransformation(const std::vector<StarTriangle>& refT
             ++lCut;
         vVotingPairs.resize(lCut);
 
-        bResult = computeSigmaClippingTransformation(vVotingPairs, refStars, tgtStars, fXWidth, fYHeight, params);
+        const TransformType ttype = getTransformType(vVotingPairs.size());
+        bResult = computeSigmaClippingTransformation(vVotingPairs, refStars, tgtStars, fXWidth, fYHeight, ttype, params);
 
         if (bResult) {
-            if (std::abs(params.a3) < 1e-10 && std::abs(params.b3) < 1e-10) {
-                params.a3 = 0;
-                params.b3 = 0;
+            if (std::abs(params.a[3]) < 1e-10 && std::abs(params.b[3]) < 1e-10) {
+                params.a[3] = 0;
+                params.b[3] = 0;
             }
         }
     }
@@ -1100,17 +1238,21 @@ AlignResult computeAlignmentInternal(const std::vector<Star>& refStars,
                                       int imageWidth, int imageHeight) {
     AlignResult result;
 
+    fprintf(stderr, "[star_align] computeAlignmentInternal: refStars=%zu tgtStars=%zu imgW=%d imgH=%d\n",
+        refStars.size(), tgtStars.size(), imageWidth, imageHeight);
+
     if (refStars.size() < 8 || tgtStars.size() < 8)
         return result;
 
     const double fXWidth = static_cast<double>(imageWidth);
     const double fYHeight = static_cast<double>(imageHeight);
 
-    BilinearParams params;
+    TransformParams params;
 
     // Try large triangle transformation first, fall back to matching triangle
     bool ok = computeLargeTriangleTransformation(refStars, tgtStars, fXWidth, fYHeight, params);
     if (!ok) {
+        fprintf(stderr, "[star_align] LargeTriangle FAILED, trying MatchingTriangle\n");
         const auto refTriangles = computeTriangles(refStars);
         ok = computeMatchingTriangleTransformation(refTriangles, refStars, tgtStars, fXWidth, fYHeight, params);
     }
@@ -1118,15 +1260,24 @@ AlignResult computeAlignmentInternal(const std::vector<Star>& refStars,
     if (!ok)
         return result;
 
+    const char* ttypeName = (params.type == TT_BICUBIC) ? "BICUBIC" : (params.type == TT_BISQUARED) ? "BISQUARED" : (params.type == TT_BILINEAR) ? "BILINEAR" : "LINEAR";
+    fprintf(stderr, "[star_align] Transform params: type=%s a0=%.10f a1=%.10f a2=%.10f a3=%.10f b0=%.10f b1=%.10f b2=%.10f b3=%.10f\n",
+        ttypeName,
+        params.a[0], params.a[1], params.a[2], params.a[3],
+        params.b[0], params.b[1], params.b[2], params.b[3]);
+
     // Extract offsets from a0, b0
-    result.offsetX = params.a0 * fXWidth;
-    result.offsetY = params.b0 * fYHeight;
+    result.offsetX = params.a[0] * fXWidth;
+    result.offsetY = params.b[0] * fYHeight;
 
     // Extract angle: transform (0,0) and (width,0), compute angle
     double pt1x, pt1y, pt2x, pt2y;
     params.transform(0, 0, pt1x, pt1y);
     params.transform(fXWidth, 0, pt2x, pt2y);
     result.angle = std::atan2(pt2y - pt1y, pt2x - pt1x);
+
+    fprintf(stderr, "[star_align] Final offsets: offsetX=%.10f offsetY=%.10f angle=%.10f\n",
+        result.offsetX, result.offsetY, result.angle);
 
     // Count matched pairs (non-zero vote pairs)
     result.matchedStars = 0;
