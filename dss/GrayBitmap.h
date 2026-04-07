@@ -121,7 +121,7 @@ public:
 
 	virtual bool IsIntegralType() const override
 	{
-		return std::is_integral<TType>::value;
+		return std::integral<TType>;
 	}
 
 	virtual bool IsFloat() const override

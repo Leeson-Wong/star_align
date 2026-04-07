@@ -1,9 +1,9 @@
 #pragma once
 
-// boost/container/vector.hpp - stubbed out
-namespace boost { namespace container { template<typename T> using vector = std::vector<T>; } }
+#if !defined(NDEBUG)
+#include <boost/container/vector.hpp>
 namespace bc = boost::container;
-
+#endif
 #include "DSSTools.h"
 #include "BilinearParameters.h"
 
@@ -40,9 +40,9 @@ public:
 	{
 		return lhs.m_fX == rhs.m_fX;
 	}
-	constexpr friend bool operator<(CStarTriangle const& lhs, CStarTriangle const& rhs) noexcept
+	constexpr friend auto operator<=>(CStarTriangle const& lhs, CStarTriangle const& rhs) noexcept
 	{
-		return lhs.m_fX < rhs.m_fX;
+		return lhs.m_fX <=> rhs.m_fX;
 	}
 };
 
@@ -73,7 +73,7 @@ public:
 	float m_fDistance;
 
 public:
-	explicit CStarDist(const size_t Star1, const size_t Star2, const float d) noexcept
+	explicit constexpr CStarDist(const size_t Star1, const size_t Star2, const float d) noexcept
 	{
 		if (Star1 < Star2)
 		{
@@ -89,7 +89,7 @@ public:
 		m_fDistance = d;
 	}
 
-	explicit CStarDist(const size_t star1, const size_t star2) noexcept : CStarDist(star1, star2, 0.0f) {}
+	explicit constexpr CStarDist(const size_t star1, const size_t star2) noexcept : CStarDist(star1, star2, 0.0f) {}
 
 	CStarDist(const CStarDist&) = default;
 	CStarDist(CStarDist&&) = default;
@@ -101,11 +101,11 @@ public:
 		return lhs.m_Star1 == rhs.m_Star1 && lhs.m_Star2 == rhs.m_Star2;
 	}
 
-	constexpr friend bool operator<(CStarDist const& lhs, CStarDist const& rhs) noexcept
+	constexpr friend auto operator<=>(CStarDist const& lhs, CStarDist const& rhs) noexcept
 	{
-		if (lhs.m_Star1 < rhs.m_Star1) return true;
-		if (lhs.m_Star1 > rhs.m_Star1) return false;
-		return lhs.m_Star2 < rhs.m_Star2;
+		const auto cmp = lhs.m_Star1 <=> rhs.m_Star1;
+		return cmp != 0 ? cmp : lhs.m_Star2 <=> rhs.m_Star2;
+//		return lhs.m_Star1 == rhs.m_Star1 ? (lhs.m_Star2 <=> rhs.m_Star2) : (lhs.m_Star1 <=> rhs.m_Star1);
 	}
 };
 
@@ -208,9 +208,9 @@ public:
 		return lhs.m_lNrVotes == rhs.m_lNrVotes;
 	}
 
-	constexpr friend bool operator<(VotingPair const& lhs, VotingPair const& rhs) noexcept
+	constexpr friend auto operator<=>(VotingPair const& lhs, VotingPair const& rhs) noexcept
 	{
-		return lhs.m_lNrVotes < rhs.m_lNrVotes;
+		return lhs.m_lNrVotes <=> rhs.m_lNrVotes;
 	}
 };
 
@@ -263,7 +263,7 @@ private:
 
 public:
 	CMatchingStars() = default;
-	explicit CMatchingStars(const int width, const int height) : m_lWidth{ width }, m_lHeight{ height }
+	explicit constexpr CMatchingStars(const int width, const int height) : m_lWidth{ width }, m_lHeight{ height }
 	{}
 	~CMatchingStars() = default;
 

@@ -1,5 +1,5 @@
 #pragma once
-#include <algorithm>
+#include <ranges>
 #include <vector>
 #include <memory>
 #include <tuple>
@@ -114,7 +114,17 @@ struct RationalModel
 };
 
 
-template <typename... Cals>
+template<typename T>
+concept IsCalibrator = requires(T t, double a, double b, double c, double d, double e, double f)
+{
+	{ t.calibrate(a, b, c) } -> std::convertible_to<BcRT>;
+	{ t.redParams.initialize(a, b, c, d, e, f) } -> std::same_as<void>;
+	{ t.greenParams.initialize(a, b, c, d, e, f) } -> std::same_as<void>;
+	{ t.blueParams.initialize(a, b, c, d, e, f) } -> std::same_as<void>;
+	t.name;
+};
+
+template <IsCalibrator... Cals>
 class BackgroundCalibratorVariant
 {
 private:
@@ -129,7 +139,7 @@ private:
 	const RgbMethod rgbMethod{ RgbMethod::Median };
 
 public:
-	template <typename C>
+	template <IsCalibrator C>
 	constexpr BackgroundCalibratorVariant(C c, const double multr, const Mode md, const RgbMethod rgbm) :
 		calibrator{ std::move(c) },
 		multiplier{ multr },
@@ -155,7 +165,7 @@ public:
 	TVariant& getCalibratorVariant();
 	TVariant const& getCalibratorVariant() const;
 
-	double calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char* pFileName);
+	double calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char8_t* pFileName);
 
 private:
 	std::tuple<std::vector<int>, std::vector<int>, std::vector<int>> calcHistogram(CMemoryBitmap const& bitmap);

@@ -36,9 +36,9 @@
 ****************************************************************************/
 // DSSProgress.h : Header file
 //
-#include <chrono>
-#include "pch.h"
-
+#include <QObject>
+#include <QElapsedTimer>
+#include <QString>
 namespace DSS
 {
 	class OldProgressBase
@@ -51,7 +51,7 @@ namespace DSS
 		int m_lastTotal2;
 		bool m_firstProgress;
 		bool m_enableCancel;
-		std::chrono::steady_clock::time_point m_timer;
+		QElapsedTimer m_timer;
 
 		enum eOutputType
 		{
@@ -120,7 +120,7 @@ namespace DSS
 		Dual    // Dual progress bar (for two progress bars)
 	};
 
-	//
+	// 
 	// Enum class to say which progress bar we are referring to.
 	//
 	enum class ProgressBar
@@ -137,7 +137,7 @@ namespace DSS
 	// implemented in the subclasses. The subclasses are responsible for
 	// implementing the actual progress display. The base class provides
 	// some common functionality that is used by all progress classes.
-	//
+	// 
 
 	class ProgressBase
 	{
@@ -150,9 +150,9 @@ namespace DSS
 		int partialValue{ 0 };
 		int totalMinimum{ 0 };
 		int totalMaximum{ 100 };
-		int totalValue{ 0 };
+		int totalValue{ 0 };	
 
-		std::chrono::steady_clock::time_point timer;
+		QElapsedTimer timer;
 		// Properties
 		QString topText{};
 		QString bottomText{};
@@ -164,7 +164,7 @@ namespace DSS
 		virtual void applyProcessorsUsed(int nCount) = 0;
 
 	public:
-		ProgressBase()
+		ProgressBase() 
 			{}
 
 		// Deleted copy and move constructors and assignment operators

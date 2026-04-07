@@ -150,12 +150,15 @@ public:
 	}
 
 	QString arg(int i) const { return QString(std::to_string(i)); }
+	QString arg(size_t i) const { return QString(std::to_string(i)); }
 	QString arg(double d, int w = 0, char f = 'g', int prec = 6) const {
 		std::ostringstream oss;
 		oss.precision(prec);
 		oss << std::fixed << d;
 		return QString(oss.str());
 	}
+	QString arg(const QString& s) const { return QString(s.data_); }
+	QString arg(const char* s) const { return QString(s); }
 
 	int indexOf(const char* s) const { return static_cast<int>(data_.find(s)); }
 	int indexOf(char c) const { return static_cast<int>(data_.find(c)); }

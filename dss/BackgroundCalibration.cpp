@@ -16,7 +16,7 @@
 // ----------------------------------------------------------------------------
 //
 // The interface simply is:
-//   double calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char* pFileName);
+//   double calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char8_t* pFileName);
 //   BcRT calibratePixel(const double r, const double g, const double b) const;
 //
 // calculateModelParameters() must be called by every light frame (parameter bitmap) to basically calculate the median values for R, G, and B of the bitmap.
@@ -75,7 +75,7 @@
 void OffsetParams::initialize(const double x0, const double x1, const double x2, const double, const double y1, const double)
 {
 	offset = y1 - x1;
-	const auto [mn, mx] = std::minmax({ x0, x1, x2 });
+	const auto [mn, mx] = std::ranges::minmax({ x0, x1, x2 });
 	minValue = mn;
 	maxValue = mx;
 }
@@ -119,7 +119,7 @@ void RationalParams::initialize(const double x0, const double x1, const double x
 	b = t1 != 0 ? t2 / t1 : 0.0;
 	c = t3 != 0 ? ((x0 - x1) - b * (x0 * y0 - x1 * y1)) / t3 : 0.0;
 	a = (b * x0 + c) * y0 - x0;
-	const auto [mn, mx] = std::minmax({ y0, y1, y2 });
+	const auto [mn, mx] = std::ranges::minmax({ y0, y1, y2 });
 	minValue = mn;
 	maxValue = mx;
 }
@@ -136,19 +136,19 @@ BcRT RationalModel::calibrate(const double r, const double g, const double b) co
 	return std::make_tuple(Calibrate(redParams, r), Calibrate(greenParams, g), Calibrate(blueParams, b));
 }
 
-template <typename... Cals>
-typename BackgroundCalibratorVariant<Cals...>::TVariant const& BackgroundCalibratorVariant<Cals...>::getCalibratorVariant() const
+template <IsCalibrator... Cals>
+BackgroundCalibratorVariant<Cals...>::TVariant const& BackgroundCalibratorVariant<Cals...>::getCalibratorVariant() const
 {
 	return this->calibrator;
 }
 
-template <typename... Cals>
-typename BackgroundCalibratorVariant<Cals...>::TVariant& BackgroundCalibratorVariant<Cals...>::getCalibratorVariant()
+template <IsCalibrator... Cals>
+BackgroundCalibratorVariant<Cals...>::TVariant& BackgroundCalibratorVariant<Cals...>::getCalibratorVariant()
 {
 	return this->calibrator;
 }
 
-template <typename... Cals>
+template <IsCalibrator... Cals>
 std::tuple<std::vector<int>, std::vector<int>, std::vector<int>> BackgroundCalibratorVariant<Cals...>::calcHistogram(CMemoryBitmap const& bitmap)
 {
 	AvxHistogram avxHistogram(bitmap);
@@ -177,7 +177,7 @@ std::tuple<std::vector<int>, std::vector<int>, std::vector<int>> BackgroundCalib
 	return { redHisto, greenHisto, blueHisto };
 }
 
-template <typename... Cals>
+template <IsCalibrator... Cals>
 std::pair<double, double> BackgroundCalibratorVariant<Cals...>::findMedianAndMax(const std::span<const int> histo, const size_t halfNumberOfPixels)
 {
 	size_t index = 0;
@@ -199,7 +199,7 @@ std::pair<double, double> BackgroundCalibratorVariant<Cals...>::findMedianAndMax
 	return { median, maximum };
 }
 
-template <typename... Cals>
+template <IsCalibrator... Cals>
 void BackgroundCalibratorVariant<Cals...>::calculateReferenceParameters(
 	const double redMedian, const double redMax, const double greenMedian, const double greenMax, const double blueMedian, const double blueMax)
 {
@@ -217,11 +217,11 @@ void BackgroundCalibratorVariant<Cals...>::calculateReferenceParameters(
 
 		if (this->rgbMethod == RgbMethod::Maximum)
 		{
-			targetBackground = std::max({ redMedian, greenMedian, blueMedian });
+			targetBackground = std::ranges::max({ redMedian, greenMedian, blueMedian });
 		}
 		else if (this->rgbMethod == RgbMethod::Minimum)
 		{
-			targetBackground = std::min({ redMedian, greenMedian, blueMedian });
+			targetBackground = std::ranges::min({ redMedian, greenMedian, blueMedian });
 		}
 		else
 		{
@@ -243,8 +243,8 @@ void BackgroundCalibratorVariant<Cals...>::calculateReferenceParameters(
 	);
 }
 
-template <typename... Cals>
-double BackgroundCalibratorVariant<Cals...>::calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char* pFileName)
+template <IsCalibrator... Cals>
+double BackgroundCalibratorVariant<Cals...>::calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char8_t* pFileName)
 {
 	const size_t halfNumberOfPixels = static_cast<size_t>(bitmap.Width()) * static_cast<size_t>(bitmap.Height()) / 2;
 

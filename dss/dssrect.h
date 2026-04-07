@@ -1,5 +1,4 @@
 #pragma once
-#include "dss_qt.h"
 
 class DSSRect final
 {

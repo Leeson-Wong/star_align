@@ -1,4 +1,5 @@
 
+#include "pch.h"
 #include "RegisterEngine.h"
 #include "Workspace.h"
 #include "PixelTransform.h"
@@ -84,8 +85,9 @@ void CRegisteredFrame::Reset()
 //
 double CRegisteredFrame::ComputeScore(const STARVECTOR& stars)
 {
-	// namespace vs removed for C++17 compatibility
+	namespace vs = std::ranges::views;
 
+	constexpr auto Filter = vs::filter([](const CStar& star) { return !star.m_bRemoved; });
 	const auto Projector = [&stars](auto&& getter, const int ndx) {
 		return std::invoke(std::forward<decltype(getter)>(getter), std::cref(stars[ndx]));
 	};
@@ -96,21 +98,15 @@ double CRegisteredFrame::ComputeScore(const STARVECTOR& stars)
 	std::iota(indexes.begin(), indexes.end(), 0);
 
 	// Sort indexes descending (due to std::greater) by CStar::circularity.
-	std::sort(indexes.begin(), indexes.end(), [&Projector](const int a, const int b) { return Projector(&CStar::m_fCircularity, a) > Projector(&CStar::m_fCircularity, b); });
+	std::ranges::sort(indexes, std::ranges::greater{}, std::bind_front(Projector, &CStar::m_fCircularity));
 	// Approximate a Gaussian weighting
 	constexpr std::array<double, 26> weights = { 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 9.5, 9.0, 8.7, 8.3, 8.0, 7.7, 7.0, 6.5, 5.7, 5.0, 4.2, 3.4, 2.8, 2.3, 2.0, 1.7, 1.5, 1.4, 1.3, 1.2 };
 	double sumWeights = 0;
 	double sum = 0;
 	// Sorted indexes -> get CStar -> filter out removed -> take max. 100 -> get circularity.
-	int ndx = 0;
-	for (const int idx : indexes)
+	for (int ndx = 0; const double q : indexes | vs::transform(std::bind_front(Projector, std::identity{})) | Filter | vs::take(MaxNumberOfConsideredStars) | vs::transform(&CStar::m_fCircularity))
 	{
-		if (stars[idx].m_bRemoved)
-			continue;
-		if (ndx >= static_cast<int>(MaxNumberOfConsideredStars))
-			break;
-		const double q = stars[idx].m_fCircularity;
-		const double w = ndx < static_cast<int>(weights.size()) ? weights[ndx] : (ndx < 40 ? 1.0 : 0.1); // Star 0..26 Gaussian weights, then 1.0, above 40 0.1.
+		const double w = ndx < weights.size() ? weights[ndx] : (ndx < 40 ? 1.0 : 0.1); // Star 0..26 Gaussian weights, then 1.0, above 40 0.1.
 		sumWeights += w;
 		sum += w * q;
 		++ndx;

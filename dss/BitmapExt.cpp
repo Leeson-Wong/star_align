@@ -358,7 +358,7 @@ bool LoadOtherPicture(const fs::path& file, std::shared_ptr<CMemoryBitmap>& rpBi
 
 	const auto copyPixels = 
 		[bytes_per_line, height, width, pBitmap, pProgress, numberOfProcessors]
-		<bool Monochrome, typename PixelType, typename GetColours, double ScalingFactor = 1.0>
+		<bool Monochrome, typename PixelType, std::invocable<const PixelType&> auto GetColours, double ScalingFactor = 1.0>
 		(const uchar* pSrc)
 	{
 

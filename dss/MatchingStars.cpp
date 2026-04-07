@@ -69,9 +69,9 @@ STARDISTVECTOR CMatchingStars::ComputeStarDistances(const QPointFVector& vStars)
 
 	vStarDist.reserve((vStars.size() * (vStars.size() - 1)) / 2);
 
-	for (size_t i = 0; i < vStars.size(); ++i)
+	for (const size_t i : std::views::iota(size_t{ 0 }, vStars.size()))
 	{
-		for (size_t j = i + 1; j < vStars.size(); ++j)
+		for (const size_t j : std::views::iota(i + 1, vStars.size()))
 		{
 			const double fDistance = Distance(vStars[i].x(), vStars[i].y(), vStars[j].x(), vStars[j].y());
 //			fMaxDistance = std::max(fDistance, fMaxDistance);
@@ -84,7 +84,7 @@ STARDISTVECTOR CMatchingStars::ComputeStarDistances(const QPointFVector& vStars)
 		&& !(CStarDist{ 2, 6 } < CStarDist{ 1, 6 }) && !(CStarDist{ 2, 6 } < CStarDist{ 2, 5 }) && !(CStarDist{ 6, 6 } < CStarDist{ 6, 6 })
 	);
 
-	std::sort(vStarDist.begin(), vStarDist.end());
+	std::ranges::sort(vStarDist);
 	return vStarDist;
 }
 
@@ -95,22 +95,22 @@ void CMatchingStars::ComputeTriangles(const QPointFVector& vStars, STARTRIANGLEV
 
 	const STARDISTVECTOR vStarDist = ComputeStarDistances(vStars);
 
-	for (size_t i = 0; i < vStars.size(); ++i)
+	for (const size_t i : std::views::iota(size_t{ 0 }, vStars.size()))
 	{
-		for (size_t j = i + 1; j < vStars.size(); ++j)
+		for (const size_t j : std::views::iota(i + 1, vStars.size()))
 		{
 			std::array<float, 3> vDistances;
-			auto it = std::lower_bound(vStarDist.begin(), vStarDist.end(), CStarDist{ i, j });
+			auto it = std::ranges::lower_bound(vStarDist, CStarDist{ i, j });
 			vDistances[0] = it->m_fDistance;
 
-			for (size_t k = j + 1; k < vStars.size(); ++k)
+			for (const size_t k : std::views::iota(j + 1, vStars.size()))
 			{
-				it = std::lower_bound(vStarDist.begin(), vStarDist.end(), CStarDist{ j, k });
+				it = std::ranges::lower_bound(vStarDist, CStarDist{ j, k });
 				vDistances[1] = it->m_fDistance;
-				it = std::lower_bound(vStarDist.begin(), vStarDist.end(), CStarDist{ i, k });
+				it = std::ranges::lower_bound(vStarDist, CStarDist{ i, k });
 				vDistances[2] = it->m_fDistance;
 
-				std::sort(vDistances.begin(), vDistances.end());
+				std::ranges::sort(vDistances);
 
 				if (vDistances[2] > 0)
 				{
@@ -128,7 +128,7 @@ void CMatchingStars::ComputeTriangles(const QPointFVector& vStars, STARTRIANGLEV
 		}
 	}
 
-	std::sort(vTriangles.begin(), vTriangles.end()); // Uses less -> sort ascending with m_fX.
+	std::ranges::sort(vTriangles); // Uses less -> sort ascending with m_fX.
 }
 
 
@@ -137,9 +137,9 @@ void CMatchingStars::InitVotingGrid(VOTINGPAIRVECTOR& vVotingPairs)
 	vVotingPairs.clear();
 	vVotingPairs.reserve(m_vRefStars.size() * m_vTgtStars.size());
 
-	for (int i = 0; i < static_cast<int>(m_vRefStars.size()); ++i)
+	for (const int i : std::views::iota(0, static_cast<int>(m_vRefStars.size())))
 	{
-		for (int j = 0; j < static_cast<int>(m_vTgtStars.size()); ++j)
+		for (const int j : std::views::iota(0, static_cast<int>(m_vTgtStars.size())))
 		{
 			vVotingPairs.emplace_back(i, j);
 		}
@@ -219,14 +219,14 @@ bool CMatchingStars::ComputeTransformation(std::span<const VotingPair> vVotingPa
 		DMATRIX X(vVotingPairs.size(), 1);
 		DMATRIX Y(vVotingPairs.size(), 1);
 
-		for (size_t i = Zero; i < vVotingPairs.size(); ++i)
+		for (const size_t i : std::views::iota(Zero, vVotingPairs.size()))
 		{
 			const QPointF& Star = RefStar(vVotingPairs[i]);
 			X(i, 0) = Star.x() / fXWidth;
 			Y(i, 0) = Star.y() / fYWidth;
 		}
 
-		for (size_t i = Zero; i < vVotingPairs.size(); ++i)
+		for (const size_t i : std::views::iota(Zero, vVotingPairs.size()))
 		{
 			const QPointF& Star = TgtStar(vVotingPairs[i]);
 			const double X1 = Star.x() / fXWidth;
@@ -313,14 +313,14 @@ bool CMatchingStars::ComputeTransformation(std::span<const VotingPair> vVotingPa
 		DMATRIX X(vVotingPairs.size(), 1);
 		DMATRIX Y(vVotingPairs.size(), 1);
 
-		for (size_t i = Zero; i < vVotingPairs.size(); ++i)
+		for (const size_t i : std::views::iota(Zero, vVotingPairs.size()))
 		{
 			const QPointF& Star = RefStar(vVotingPairs[i]);
 			X(i, 0) = Star.x() / fXWidth;
 			Y(i, 0) = Star.y() / fYWidth;
 		}
 
-		for (size_t i = Zero; i < vVotingPairs.size(); ++i)
+		for (const size_t i : std::views::iota(Zero, vVotingPairs.size()))
 		{
 			const QPointF& Star = TgtStar(vVotingPairs[i]);
 
@@ -385,14 +385,14 @@ bool CMatchingStars::ComputeTransformation(std::span<const VotingPair> vVotingPa
 		DMATRIX X(vVotingPairs.size(), 1);
 		DMATRIX Y(vVotingPairs.size(), 1);
 
-		for (size_t i = Zero; i < vVotingPairs.size(); ++i)
+		for (const size_t i : std::views::iota(Zero, vVotingPairs.size()))
 		{
 			const QPointF& Star = RefStar(vVotingPairs[i]);
 			X(i, 0) = Star.x() / fXWidth;
 			Y(i, 0) = Star.y() / fYWidth;
 		}
 
-		for (size_t i = Zero; i < vVotingPairs.size(); ++i)
+		for (const size_t i : std::views::iota(Zero, vVotingPairs.size()))
 		{
 			const QPointF& Star = TgtStar(vVotingPairs[i]);
 			const double X1 = Star.x() / fXWidth;
@@ -443,30 +443,27 @@ std::pair<double, size_t> CMatchingStars::ComputeDistanceBetweenStars(const VOTI
 	auto vdistance = std::tie(distances...);
 
 	// Compute the distance between the stars
+	for (size_t i = 0; const auto& testedPair : vTestedPairs)
 	{
-		size_t i = 0;
-		for (const auto& testedPair : vTestedPairs)
+		if (!testedPair.IsCorner())
 		{
-			if (!testedPair.IsCorner())
+			const double distance = Distance(
+				projection.transform(TgtStar(testedPair)), 
+				RefStar(testedPair)
+			);
+
+			if constexpr (sizeof...(DistanceVector) == 1)
 			{
-				const double distance = Distance(
-					projection.transform(TgtStar(testedPair)),
-					RefStar(testedPair)
-				);
-
-				if constexpr (sizeof...(DistanceVector) == 1)
-				{
-					std::get<0>(vdistance).push_back(distance);
-				}
-
-				if (distance > maxDistance)
-				{
-					maxDistance = distance;
-					maxDistanceIndex = i;
-				}
+				std::get<0>(vdistance).push_back(distance);
 			}
-			++i;
+
+			if (distance > maxDistance)
+			{
+				maxDistance = distance;
+				maxDistanceIndex = i;
+			}
 		}
+		++i;
 	}
 
 	return { maxDistance, maxDistanceIndex };
@@ -498,17 +495,14 @@ bool CMatchingStars::ComputeCoordinatesTransformation(VOTINGPAIRVECTOR& vVotingP
 		vAddedPairs.clear();
 		vTestedPairs.clear();
 		// First add the locked pairs
+		for (int i = 0; const auto& pair : vPairs)
 		{
-			int i = 0;
-			for (const auto& pair : vPairs)
+			if (pair.IsActive() && pair.IsLocked())
 			{
-				if (pair.IsActive() && pair.IsLocked())
-				{
-					vTestedPairs.push_back(pair);
-					vAddedPairs.push_back(i);
-				}
-				++i;
+				vTestedPairs.push_back(pair);
+				vAddedPairs.push_back(i);
 			}
+			++i;
 		}
 
 		// Then add the other pairs up to the limit
@@ -769,7 +763,7 @@ bool CMatchingStars::ComputeSigmaClippingTransformation(const VOTINGPAIRVECTOR& 
 			vPairs.push_back(vp);
 
 			// And compute the transformation with the four corners firmly set
-			std::sort(vPairs.begin(), vPairs.end(), std::greater<>{});
+			std::ranges::sort(vPairs, std::ranges::greater{});
 			bResult = ComputeCoordinatesTransformation(vPairs, BilinearParameters, TType);
 
 			// Remove inactive and corners from the resulting pairs
@@ -970,7 +964,7 @@ bool CMatchingStars::ComputeMatchingTriangleTransformation(CBilinearParameters &
 	vVotingPairs = vOutputVotingPairs;
 */
 
-	std::sort(vVotingPairs.begin(), vVotingPairs.end(), std::greater<>{});
+	std::ranges::sort(vVotingPairs, std::ranges::greater{});
 
 	// At this point voting pairs are ordered descending
 	// Then eliminate false matches and get transformations parameters
@@ -1007,9 +1001,8 @@ bool CMatchingStars::ComputeLargeTriangleTransformation(CBilinearParameters& Bil
 
 	constexpr auto createIota = [](const size_t size) -> std::vector<int>
 	{
-		std::vector<int> result(size);
-		std::iota(result.begin(), result.end(), 0);
-		return result;
+		const auto iota = std::views::iota(0, static_cast<int>(size));
+		return std::vector<int>(iota.begin(), iota.end());
 	};
 
 	// Compute patterns
@@ -1025,8 +1018,8 @@ bool CMatchingStars::ComputeLargeTriangleTransformation(CBilinearParameters& Bil
 //	for (const size_t i : std::views::iota(size_t{ 0 }, targetStarDistances.size()))
 //		m_vTgtStarIndices.push_back(static_cast<int>(i));
 
-	std::sort(m_vRefStarIndices.begin(), m_vRefStarIndices.end(), [this](int a, int b) { return m_vRefStarDistances[a].m_fDistance > m_vRefStarDistances[b].m_fDistance; });
-	std::sort(targetStarIndices.begin(), targetStarIndices.end(), [&targetStarDistances](int a, int b) { return targetStarDistances[a].m_fDistance > targetStarDistances[b].m_fDistance; });
+	std::ranges::sort(m_vRefStarIndices, std::ranges::greater{}, [this](const int starIndex) { return m_vRefStarDistances[starIndex].m_fDistance; });
+	std::ranges::sort(targetStarIndices, std::ranges::greater{}, [&targetStarDistances](const int starIndex) { return targetStarDistances[starIndex].m_fDistance; });
 
 	VOTINGPAIRVECTOR vVotingPairs;
 	InitVotingGrid(vVotingPairs);
@@ -1037,8 +1030,8 @@ bool CMatchingStars::ComputeLargeTriangleTransformation(CBilinearParameters& Bil
 	// We use a std::span to speed up the lower_bound() in debug mode. This avoids all those iterator checks.
 	const auto GetRefStarDistance = [refDst = std::span(std::as_const(m_vRefStarDistances))](const int star1, const int star2) -> float
 	{
-		const auto it = std::lower_bound(refDst.begin(), refDst.end(), CStarDist(star1, star2));
-		return it == refDst.end() ? 0.0 : it->m_fDistance;
+		const auto it = std::ranges::lower_bound(refDst, CStarDist(star1, star2));
+		return it == std::ranges::end(refDst) ? 0.0 : it->m_fDistance;
 	};
 
 	for (size_t i = 0, j = 0; i < targetStarDistances.size() && j < m_vRefStarDistances.size();)
@@ -1063,11 +1056,11 @@ bool CMatchingStars::ComputeLargeTriangleTransformation(CBilinearParameters& Bil
 			{
 				if ((lTgtStar3 != lTgtStar1) && (lTgtStar3 != lTgtStar2))
 				{
-					auto it = std::lower_bound(targetStarDistances.begin(), targetStarDistances.end(), CStarDist(lTgtStar1, lTgtStar3));
-					const double fTgtDistance13 = it == targetStarDistances.end() ? 0.0 : it->m_fDistance;
+					auto it = std::ranges::lower_bound(targetStarDistances, CStarDist(lTgtStar1, lTgtStar3));
+					const double fTgtDistance13 = it == std::ranges::end(targetStarDistances) ? 0.0 : it->m_fDistance;
 
-					it = std::lower_bound(targetStarDistances.begin(), targetStarDistances.end(), CStarDist(lTgtStar2, lTgtStar3));
-					const double fTgtDistance23 = it == targetStarDistances.end() ? 0.0 : it->m_fDistance;
+					it = std::ranges::lower_bound(targetStarDistances, CStarDist(lTgtStar2, lTgtStar3));
+					const double fTgtDistance23 = it == std::ranges::end(targetStarDistances) ? 0.0 : it->m_fDistance;
 
 					const double fRatio = std::max(fTgtDistance13, fTgtDistance23) / fTgtDistance12;
 					// Filter triangle because :
@@ -1113,7 +1106,7 @@ bool CMatchingStars::ComputeLargeTriangleTransformation(CBilinearParameters& Bil
 	}
 
 	// Resolve votes
-	std::sort(vVotingPairs.begin(), vVotingPairs.end(), std::greater<>{});
+	std::ranges::sort(vVotingPairs, std::ranges::greater{});
 
 	// At this point voting pairs are ordered descending
 	// Then eliminate false matches and get transformations parameters
