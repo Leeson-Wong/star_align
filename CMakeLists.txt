@@ -4,11 +4,11 @@ project(star_align LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_library(star_align STATIC star_align.cpp star_align.h)
-target_include_directories(star_align PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+#add_library(dss STATIC star_align.cpp star_align.h)
+#target_include_directories(dss PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_subdirectory(libraw)
 
 # Test executable
-add_executable(test_star_align test_star_align.cpp)
-target_link_libraries(test_star_align PRIVATE star_align raw)
+add_executable(main main.cpp)
+target_link_libraries(main PRIVATE raw)
