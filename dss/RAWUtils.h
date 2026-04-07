@@ -1,9 +1,17 @@
 #pragma once
-// RAWUtils.h - stub for RAW file utilities
-#include "pch.h"
-class CMemoryBitmap;
-class CBitmapInfo;
 
-inline bool IsRAWFile(const QString&) { return false; }
-inline bool LoadRAWPicture(const fs::path&, std::shared_ptr<CMemoryBitmap>&, class DSS::OldProgressBase*) { return false; }
-inline bool GetRAWPictureInfo(const fs::path&, CBitmapInfo&) { return false; }
+class CBitmapInfo;
+class CMemoryBitmap;
+namespace DSS { class OldProgressBase; }
+
+bool IsSuperPixels();
+bool IsRawBayer();
+bool IsRawAHD();
+bool IsRawBilinear();
+
+void PushRAWSettings(bool bSuperPixel, bool bRawBayer);
+void PopRAWSettings();
+
+bool IsRAWPicture(const fs::path& path, QString& strModel);
+bool IsRAWPicture(const fs::path& path, CBitmapInfo& BitmapInfo);
+bool LoadRAWPicture(const fs::path& path, std::shared_ptr<CMemoryBitmap>& rpBitmap, DSS::OldProgressBase* pProgress);

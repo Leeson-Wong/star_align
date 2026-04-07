@@ -1,12 +1,30 @@
 #pragma once
-// GreyMultiBitmap.h - stub for grey multi-bitmap
-#include "pch.h"
-#include "MemoryBitmap.h"
+#include "MultiBitmap.h"
+#include "BitmapCharacteristics.h"
 
-class CGreyMultiBitmap
+template <typename TType, typename TTypeOutput = TType>
+class CGrayMultiBitmapT : public CMultiBitmap
 {
+protected:
+	virtual std::shared_ptr<CMemoryBitmap> CreateNewMemoryBitmap() const override;
+	virtual std::shared_ptr<CMemoryBitmap> CreateOutputMemoryBitmap() const override;
+	virtual bool SetScanLines(CMemoryBitmap* pBitmap, int lLine, const std::vector<void*>& vScanLines) override;
+
 public:
-	virtual ~CGreyMultiBitmap() = default;
-	virtual void SetNrBitmaps(int) {}
-	virtual void AddBitmap(CMemoryBitmap*) {}
+	CGrayMultiBitmapT()
+	{}
+
+	virtual ~CGrayMultiBitmapT() override
+	{}
+
+	virtual int GetNrChannels() const override
+	{
+		return 1;
+	}
+
+	virtual int GetNrBytesPerChannel() const override
+	{
+		return sizeof(TType);
+	}
 };
+
