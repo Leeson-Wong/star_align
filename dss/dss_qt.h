@@ -19,11 +19,14 @@ typedef double qreal;
 typedef long long qint64;
 typedef unsigned long long quint64;
 typedef ptrdiff_t qsizetype;
+typedef unsigned int uint;
+typedef unsigned long ulong;
 
 // ============================================================
 // Forward declarations (for types used before full definition)
 // ============================================================
 class QByteArray;
+class QChar;
 
 // ============================================================
 // Qt namespace (partial - needs to exist before some methods)
@@ -60,6 +63,8 @@ public:
 	QPointF(qreal x, qreal y) : xp(x), yp(y) {}
 	qreal x() const { return xp; }
 	qreal y() const { return yp; }
+	qreal& rx() { return xp; }
+	qreal& ry() { return yp; }
 	QPointF operator*(qreal s) const { return QPointF(xp * s, yp * s); }
 	QPointF operator/(qreal s) const { return QPointF(xp / s, yp / s); }
 	QPointF operator+(const QPointF& o) const { return QPointF(xp + o.xp, yp + o.yp); }
@@ -127,6 +132,23 @@ public:
 	QString& append(const QString& s) { data_ += s.data_; return *this; }
 	QString& append(int i) { data_ += std::to_string(i); return *this; }
 
+	double toDouble(bool* ok = nullptr) const {
+		try { size_t pos; double d = std::stod(data_, &pos); if (ok) *ok = true; return d; }
+		catch (...) { if (ok) *ok = false; return 0.0; }
+	}
+	float toFloat(bool* ok = nullptr) const {
+		try { size_t pos; float f = std::stof(data_, &pos); if (ok) *ok = true; return f; }
+		catch (...) { if (ok) *ok = false; return 0.0f; }
+	}
+	int toInt(bool* ok = nullptr) const {
+		try { size_t pos; int i = std::stoi(data_, &pos); if (ok) *ok = true; return i; }
+		catch (...) { if (ok) *ok = false; return 0; }
+	}
+	long toLong(bool* ok = nullptr) const {
+		try { size_t pos; long l = std::stol(data_, &pos); if (ok) *ok = true; return l; }
+		catch (...) { if (ok) *ok = false; return 0L; }
+	}
+
 	QString arg(int i) const { return QString(std::to_string(i)); }
 	QString arg(double d, int w = 0, char f = 'g', int prec = 6) const {
 		std::ostringstream oss;
@@ -137,6 +159,13 @@ public:
 
 	int indexOf(const char* s) const { return static_cast<int>(data_.find(s)); }
 	int indexOf(char c) const { return static_cast<int>(data_.find(c)); }
+	bool startsWith(const char* s) const { return data_.compare(0, strlen(s), s) == 0; }
+	bool startsWith(const QString& s) const { return data_.compare(0, s.data_.size(), s.data_) == 0; }
+	bool endsWith(const char* s) const { size_t len = strlen(s); return data_.size() >= len && data_.compare(data_.size() - len, len, s) == 0; }
+	bool endsWith(const QString& s) const { return endsWith(s.data_.c_str()); }
+	bool contains(const char* s) const { return data_.find(s) != std::string::npos; }
+	bool contains(char c) const { return data_.find(c) != std::string::npos; }
+	bool contains(const QString& s) const { return data_.find(s.data_) != std::string::npos; }
 
 	QString left(int n) const { return QString(data_.substr(0, n)); }
 	QString right(int n) const { return QString(data_.substr(data_.size() > static_cast<size_t>(n) ? data_.size() - n : 0)); }
@@ -169,8 +198,14 @@ public:
 	bool operator==(const QString& o) const { return data_ == o.data_; }
 	bool operator!=(const QString& o) const { return data_ != o.data_; }
 	bool operator<(const QString& o) const { return data_ < o.data_; }
+	bool operator>(const QString& o) const { return data_ > o.data_; }
+	bool operator<=(const QString& o) const { return data_ <= o.data_; }
+	bool operator>=(const QString& o) const { return data_ >= o.data_; }
 	QString operator+(const char* s) const { return QString(data_ + s); }
 	QString operator+(const QString& o) const { return QString(data_ + o.data_); }
+	QString& operator+=(const char* s) { data_ += s; return *this; }
+	QString& operator+=(const QString& o) { data_ += o.data_; return *this; }
+	QString& operator+=(char c) { data_ += c; return *this; }
 
 	static QString number(int n) { return QString(std::to_string(n)); }
 	static QString number(double d, char f = 'g', int prec = 6) {
@@ -187,7 +222,10 @@ public:
 	}
 	static QString fromStdString(const std::string& s) { return QString(s); }
 	static QString fromStdU16String(const std::u16string& s) {
-		return QString(std::string(s.begin(), s.end()));
+		std::string result;
+		result.reserve(s.size());
+		for (char16_t c : s) result += static_cast<char>(c);
+		return QString(result);
 	}
 
 	QString& setNum(int n) { data_ = std::to_string(n); return *this; }
@@ -199,6 +237,59 @@ public:
 		oss << d;
 		data_ = oss.str();
 		return *this;
+	}
+
+	QString toUpper() const {
+		std::string s = data_;
+		std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+		return QString(s);
+	}
+	QString toLower() const {
+		std::string s = data_;
+		std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+		return QString(s);
+	}
+	QString& replace(int pos, int len, const QString& s) {
+		data_.replace(pos, len, s.data_);
+		return *this;
+	}
+	QString& replace(const char* from, const char* to) {
+		size_t pos = 0;
+		size_t flen = strlen(from);
+		size_t tlen = strlen(to);
+		while ((pos = data_.find(from, pos)) != std::string::npos) {
+			data_.replace(pos, flen, to);
+			pos += tlen;
+		}
+		return *this;
+	}
+	QString& remove(int pos, int len) {
+		data_.erase(pos, len);
+		return *this;
+	}
+	QString simplified() const {
+		QString result;
+		bool lastWasSpace = true;
+		for (char c : data_) {
+			if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+				if (!lastWasSpace) { result.data_ += ' '; lastWasSpace = true; }
+			} else {
+				result.data_ += c; lastWasSpace = false;
+			}
+		}
+		return result.trimmed();
+	}
+	QString section(const char* sep, int start, int end = -1) const {
+		QStringList parts = split(sep);
+		if (parts.isEmpty()) return QString();
+		if (start < 0) start = parts.count() + start;
+		if (end < 0) end = parts.count() + end;
+		QString result;
+		for (int i = start; i <= end && i < parts.count(); ++i) {
+			if (i > start) result.data_ += sep;
+			result.data_ += parts[i].data_;
+		}
+		return result;
 	}
 
 private:

@@ -129,7 +129,7 @@ private:
 	const RgbMethod rgbMethod{ RgbMethod::Median };
 
 public:
-	template <IsCalibrator C>
+	template <typename C>
 	constexpr BackgroundCalibratorVariant(C c, const double multr, const Mode md, const RgbMethod rgbm) :
 		calibrator{ std::move(c) },
 		multiplier{ multr },
@@ -155,7 +155,7 @@ public:
 	TVariant& getCalibratorVariant();
 	TVariant const& getCalibratorVariant() const;
 
-	double calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char8_t* pFileName);
+	double calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char* pFileName);
 
 private:
 	std::tuple<std::vector<int>, std::vector<int>, std::vector<int>> calcHistogram(CMemoryBitmap const& bitmap);

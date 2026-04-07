@@ -443,27 +443,30 @@ std::pair<double, size_t> CMatchingStars::ComputeDistanceBetweenStars(const VOTI
 	auto vdistance = std::tie(distances...);
 
 	// Compute the distance between the stars
-	for (size_t i = 0; const auto& testedPair : vTestedPairs)
 	{
-		if (!testedPair.IsCorner())
+		size_t i = 0;
+		for (const auto& testedPair : vTestedPairs)
 		{
-			const double distance = Distance(
-				projection.transform(TgtStar(testedPair)), 
-				RefStar(testedPair)
-			);
-
-			if constexpr (sizeof...(DistanceVector) == 1)
+			if (!testedPair.IsCorner())
 			{
-				std::get<0>(vdistance).push_back(distance);
-			}
+				const double distance = Distance(
+					projection.transform(TgtStar(testedPair)),
+					RefStar(testedPair)
+				);
 
-			if (distance > maxDistance)
-			{
-				maxDistance = distance;
-				maxDistanceIndex = i;
+				if constexpr (sizeof...(DistanceVector) == 1)
+				{
+					std::get<0>(vdistance).push_back(distance);
+				}
+
+				if (distance > maxDistance)
+				{
+					maxDistance = distance;
+					maxDistanceIndex = i;
+				}
 			}
+			++i;
 		}
-		++i;
 	}
 
 	return { maxDistance, maxDistanceIndex };
@@ -495,14 +498,17 @@ bool CMatchingStars::ComputeCoordinatesTransformation(VOTINGPAIRVECTOR& vVotingP
 		vAddedPairs.clear();
 		vTestedPairs.clear();
 		// First add the locked pairs
-		for (int i = 0; const auto& pair : vPairs)
 		{
-			if (pair.IsActive() && pair.IsLocked())
+			int i = 0;
+			for (const auto& pair : vPairs)
 			{
-				vTestedPairs.push_back(pair);
-				vAddedPairs.push_back(i);
+				if (pair.IsActive() && pair.IsLocked())
+				{
+					vTestedPairs.push_back(pair);
+					vAddedPairs.push_back(i);
+				}
+				++i;
 			}
-			++i;
 		}
 
 		// Then add the other pairs up to the limit

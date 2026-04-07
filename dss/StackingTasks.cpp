@@ -1343,15 +1343,18 @@ void CAllStackingTasks::AddFileToTask(const CFrameInfo& frameInfo, const std::ui
 //		ti.m_vBitmaps.push_back(frameInfo);
 //		m_vTasks.push_back(ti);
 
-		m_vTasks.emplace_back(CTaskInfo{ .m_dwTaskID = static_cast<std::uint32_t>(m_vTasks.size() + 1),
-			.m_groupID = dwGroupID,
-			.m_TaskType = frameInfo.m_PictureType,
-			.m_lISOSpeed = frameInfo.m_lISOSpeed,
-			.m_lGain = frameInfo.m_lGain,
-			.m_fExposure = frameInfo.m_fExposure,
-			.m_fAperture = frameInfo.m_fAperture,
-			.m_vBitmaps{ frameInfo }
-		});
+		{
+			CTaskInfo ti;
+			ti.m_dwTaskID = static_cast<std::uint32_t>(m_vTasks.size() + 1);
+			ti.m_groupID = dwGroupID;
+			ti.m_TaskType = frameInfo.m_PictureType;
+			ti.m_lISOSpeed = frameInfo.m_lISOSpeed;
+			ti.m_lGain = frameInfo.m_lGain;
+			ti.m_fExposure = frameInfo.m_fExposure;
+			ti.m_fAperture = frameInfo.m_fAperture;
+			ti.m_vBitmaps.push_back(frameInfo);
+			m_vTasks.push_back(ti);
+		}
 	}
 
 	if (!m_bUsingJPEG && (frameInfo.m_strInfos.left(4) == "JPEG"))

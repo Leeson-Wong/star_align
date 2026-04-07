@@ -35,6 +35,8 @@
 
 // Minimal std::span polyfill for C++17
 namespace std {
+static constexpr ptrdiff_t dynamic_extent = -1;
+
 template<typename T, ptrdiff_t Extent = dynamic_extent>
 class span {
 public:
@@ -82,8 +84,6 @@ private:
 	size_type size_;
 };
 
-static constexpr ptrdiff_t dynamic_extent = -1;
-
 template<typename T, ptrdiff_t E>
 constexpr auto as_const(span<T, E> s) noexcept { return span<const T, E>(s); }
 } // namespace std
@@ -92,6 +92,20 @@ namespace fs = std::filesystem;
 
 using std::min;
 using std::max;
+
+// ============================================================
+// C++20 polyfills for C++17 compatibility
+// ============================================================
+
+// consteval -> constexpr (C++20 keyword)
+#ifndef consteval
+#define consteval constexpr
+#endif
+
+// char8_t (C++20 type)
+#ifndef __cpp_char8_t
+typedef unsigned char char8_t;
+#endif
 
 // ZClass stubs
 #include "ztrace.h"

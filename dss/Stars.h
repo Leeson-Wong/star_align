@@ -33,15 +33,15 @@ public:
 	CStar(CStar&&) = default;
 	~CStar() = default;
 
-	friend constexpr auto operator<=>(const CStar& lhs, const CStar& rhs)
-	{
-		const auto cmp = lhs.m_fX <=> rhs.m_fX;
-		return cmp != 0 ? cmp : lhs.m_fY <=> rhs.m_fY;
-	}
-	// Two stars are equal if they are at the same position
 	friend constexpr bool operator==(const CStar& lhs, const CStar& rhs)
 	{
 		return lhs.m_fX == rhs.m_fX && lhs.m_fY == rhs.m_fY;
+	}
+	friend constexpr bool operator<(const CStar& lhs, const CStar& rhs)
+	{
+		if (lhs.m_fX < rhs.m_fX) return true;
+		if (lhs.m_fX > rhs.m_fX) return false;
+		return lhs.m_fY < rhs.m_fY;
 	}
 
 private:
@@ -93,22 +93,25 @@ inline int FindNearestStar(const double fX, const double fY, const STARVECTOR& v
 	double minDistanceSqr = std::numeric_limits<double>::max();
 	bIn = false;
 
-	for (int i = 0; const auto& star : vStars)
 	{
-		if (!star.m_bRemoved)
+		int i = 0;
+		for (const auto& star : vStars)
 		{
-			const double dx = star.m_fX - fX;
-			const double dy = star.m_fY - fY;
-			const double testDistanceSqr = dx * dx + dy * dy;
-
-			if (testDistanceSqr < minDistanceSqr)
+			if (!star.m_bRemoved)
 			{
-				minDistanceSqr = testDistanceSqr;
-				lResult = i;
-				bIn = star.IsInRadius(QPointF{ fX, fY });
+				const double dx = star.m_fX - fX;
+				const double dy = star.m_fY - fY;
+				const double testDistanceSqr = dx * dx + dy * dy;
+
+				if (testDistanceSqr < minDistanceSqr)
+				{
+					minDistanceSqr = testDistanceSqr;
+					lResult = i;
+					bIn = star.IsInRadius(QPointF{ fX, fY });
+				}
 			}
+			++i;
 		}
-		++i;
 	}
 
 	fDistance = lResult >= 0 ? std::sqrt(minDistanceSqr) : -1.0;

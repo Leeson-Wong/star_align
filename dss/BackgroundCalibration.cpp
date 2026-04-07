@@ -16,7 +16,7 @@
 // ----------------------------------------------------------------------------
 //
 // The interface simply is:
-//   double calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char8_t* pFileName);
+//   double calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char* pFileName);
 //   BcRT calibratePixel(const double r, const double g, const double b) const;
 //
 // calculateModelParameters() must be called by every light frame (parameter bitmap) to basically calculate the median values for R, G, and B of the bitmap.
@@ -136,19 +136,19 @@ BcRT RationalModel::calibrate(const double r, const double g, const double b) co
 	return std::make_tuple(Calibrate(redParams, r), Calibrate(greenParams, g), Calibrate(blueParams, b));
 }
 
-template <IsCalibrator... Cals>
-BackgroundCalibratorVariant<Cals...>::TVariant const& BackgroundCalibratorVariant<Cals...>::getCalibratorVariant() const
+template <typename... Cals>
+typename BackgroundCalibratorVariant<Cals...>::TVariant const& BackgroundCalibratorVariant<Cals...>::getCalibratorVariant() const
 {
 	return this->calibrator;
 }
 
-template <IsCalibrator... Cals>
-BackgroundCalibratorVariant<Cals...>::TVariant& BackgroundCalibratorVariant<Cals...>::getCalibratorVariant()
+template <typename... Cals>
+typename BackgroundCalibratorVariant<Cals...>::TVariant& BackgroundCalibratorVariant<Cals...>::getCalibratorVariant()
 {
 	return this->calibrator;
 }
 
-template <IsCalibrator... Cals>
+template <typename... Cals>
 std::tuple<std::vector<int>, std::vector<int>, std::vector<int>> BackgroundCalibratorVariant<Cals...>::calcHistogram(CMemoryBitmap const& bitmap)
 {
 	AvxHistogram avxHistogram(bitmap);
@@ -177,7 +177,7 @@ std::tuple<std::vector<int>, std::vector<int>, std::vector<int>> BackgroundCalib
 	return { redHisto, greenHisto, blueHisto };
 }
 
-template <IsCalibrator... Cals>
+template <typename... Cals>
 std::pair<double, double> BackgroundCalibratorVariant<Cals...>::findMedianAndMax(const std::span<const int> histo, const size_t halfNumberOfPixels)
 {
 	size_t index = 0;
@@ -199,7 +199,7 @@ std::pair<double, double> BackgroundCalibratorVariant<Cals...>::findMedianAndMax
 	return { median, maximum };
 }
 
-template <IsCalibrator... Cals>
+template <typename... Cals>
 void BackgroundCalibratorVariant<Cals...>::calculateReferenceParameters(
 	const double redMedian, const double redMax, const double greenMedian, const double greenMax, const double blueMedian, const double blueMax)
 {
@@ -243,8 +243,8 @@ void BackgroundCalibratorVariant<Cals...>::calculateReferenceParameters(
 	);
 }
 
-template <IsCalibrator... Cals>
-double BackgroundCalibratorVariant<Cals...>::calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char8_t* pFileName)
+template <typename... Cals>
+double BackgroundCalibratorVariant<Cals...>::calculateModelParameters(CMemoryBitmap const& bitmap, const bool calcReference, const char* pFileName)
 {
 	const size_t halfNumberOfPixels = static_cast<size_t>(bitmap.Width()) * static_cast<size_t>(bitmap.Height()) / 2;
 
