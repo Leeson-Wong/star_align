@@ -125,8 +125,8 @@ inline int FindNearestStarWithinDistance(const double fX, const double fY, const
 	bIn = false;
 
 	// First star right of fx - distanceRange.
-	auto it = std::ranges::lower_bound(vStars, CStar{ fX - distanceRange, 0.0 });
-	while (it != std::ranges::end(vStars) && it->m_fX <= fX + distanceRange) // While star is left of fx + distanceRange
+	auto it = std::lower_bound(vStars.begin(), vStars.end(), CStar{ fX - distanceRange, 0.0 });
+	while (it != vStars.end() && it->m_fX <= fX + distanceRange) // While star is left of fx + distanceRange
 	{
 		if (!it->m_bRemoved && std::abs(it->m_fY - fY) <= distanceRange) // y-distance smaller than distanceRange ?
 		{

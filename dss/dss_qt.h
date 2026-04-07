@@ -18,6 +18,7 @@ class QString;
 typedef double qreal;
 typedef long long qint64;
 typedef unsigned long long quint64;
+typedef ptrdiff_t qsizetype;
 
 // ============================================================
 // Forward declarations (for types used before full definition)

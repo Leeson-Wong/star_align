@@ -1,5 +1,5 @@
 #pragma once
-#include <ranges>
+#include <algorithm>
 #include <vector>
 #include <memory>
 #include <tuple>
@@ -114,17 +114,7 @@ struct RationalModel
 };
 
 
-template<typename T>
-concept IsCalibrator = requires(T t, double a, double b, double c, double d, double e, double f)
-{
-	{ t.calibrate(a, b, c) } -> std::convertible_to<BcRT>;
-	{ t.redParams.initialize(a, b, c, d, e, f) } -> std::same_as<void>;
-	{ t.greenParams.initialize(a, b, c, d, e, f) } -> std::same_as<void>;
-	{ t.blueParams.initialize(a, b, c, d, e, f) } -> std::same_as<void>;
-	t.name;
-};
-
-template <IsCalibrator... Cals>
+template <typename... Cals>
 class BackgroundCalibratorVariant
 {
 private:

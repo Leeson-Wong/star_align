@@ -52,7 +52,7 @@ public:
 
 	virtual bool IsIntegralType() const override
 	{
-		return std::integral<TType>;
+		return std::is_integral<TType>::value;
 	}
 
 	virtual bool IsFloat() const override

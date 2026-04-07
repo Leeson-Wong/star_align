@@ -75,7 +75,7 @@
 void OffsetParams::initialize(const double x0, const double x1, const double x2, const double, const double y1, const double)
 {
 	offset = y1 - x1;
-	const auto [mn, mx] = std::ranges::minmax({ x0, x1, x2 });
+	const auto [mn, mx] = std::minmax({ x0, x1, x2 });
 	minValue = mn;
 	maxValue = mx;
 }
@@ -119,7 +119,7 @@ void RationalParams::initialize(const double x0, const double x1, const double x
 	b = t1 != 0 ? t2 / t1 : 0.0;
 	c = t3 != 0 ? ((x0 - x1) - b * (x0 * y0 - x1 * y1)) / t3 : 0.0;
 	a = (b * x0 + c) * y0 - x0;
-	const auto [mn, mx] = std::ranges::minmax({ y0, y1, y2 });
+	const auto [mn, mx] = std::minmax({ y0, y1, y2 });
 	minValue = mn;
 	maxValue = mx;
 }
@@ -217,11 +217,11 @@ void BackgroundCalibratorVariant<Cals...>::calculateReferenceParameters(
 
 		if (this->rgbMethod == RgbMethod::Maximum)
 		{
-			targetBackground = std::ranges::max({ redMedian, greenMedian, blueMedian });
+			targetBackground = std::max({ redMedian, greenMedian, blueMedian });
 		}
 		else if (this->rgbMethod == RgbMethod::Minimum)
 		{
-			targetBackground = std::ranges::min({ redMedian, greenMedian, blueMedian });
+			targetBackground = std::min({ redMedian, greenMedian, blueMedian });
 		}
 		else
 		{
