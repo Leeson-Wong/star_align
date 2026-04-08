@@ -132,6 +132,7 @@ inline double Sigma(const std::vector<double>& v) {
 
 // stride is in bytes. pData points to BGRA16 data (4 x uint16_t per pixel).
 // Returns grayscale in [0, 256) range.
+// Uses HSL luminance formula (max+min)/2 to match DSS's GetLuminance().
 std::vector<double> extractGray(const uint16_t* pData, int width, int height, int stride) {
     std::vector<double> gray(static_cast<size_t>(width) * static_cast<size_t>(height));
     for (int row = 0; row < height; ++row) {
@@ -140,11 +141,14 @@ std::vector<double> extractGray(const uint16_t* pData, int width, int height, in
         double* pOut = gray.data() + static_cast<size_t>(row) * width;
         for (int col = 0; col < width; ++col) {
             // BGRA16: B, G, R, A - 4 uint16_t per pixel
-            const uint16_t B = pRow[col * 4 + 0];
-            const uint16_t G = pRow[col * 4 + 1];
-            const uint16_t R = pRow[col * 4 + 2];
-            // Map to [0, 256): (B + G + R) / 3 / 256.0
-            pOut[col] = (static_cast<double>(B) + static_cast<double>(G) + static_cast<double>(R)) / 768.0;
+            const double B = pRow[col * 4 + 0];
+            const double G = pRow[col * 4 + 1];
+            const double R = pRow[col * 4 + 2];
+            // HSL luminance: (max(R,G,B) + min(R,G,B)) / 2
+            // Then scale from [0, 65535] to [0, 256) via / 256.0 / 256.0 = / 65536.0 * 256.0
+            const double minVal = std::min({R, G, B});
+            const double maxVal = std::max({R, G, B});
+            pOut[col] = (maxVal + minVal) * (0.5 / 256.0 / 256.0) * 256.0;
         }
     }
     return gray;
@@ -1203,7 +1207,38 @@ std::vector<Star> detectStars(
     // Extract grayscale
     auto gray = extractGray(pData, width, height, effectiveStride);
 
-    // Detect stars
+    if (params.autoThreshold) {
+        // DSS-style auto-threshold: iteratively adjust threshold to find ~targetStarCount stars.
+        // DSS starts at 65% for the first image, uses previous threshold for subsequent images,
+        // and adjusts using an exponential function.
+        constexpr double MinThreshold = 0.00075; // 0.075% - DSS minimum
+        constexpr double MaxThreshold = 0.65;    // DSS starts at 65% for first image
+        double threshold = MaxThreshold;
+        const int target = params.targetStarCount;
+
+        // First pass with high threshold
+        auto stars = detectStarsInternal(gray, width, height, threshold, params.maxStarSize);
+
+        // Iteratively lower threshold until we get enough stars
+        for (int iteration = 0; iteration < 20 && static_cast<int>(stars.size()) < target; ++iteration) {
+            if (threshold <= MinThreshold)
+                break;
+            // Exponential decrease, similar to DSS
+            threshold *= 0.6;
+            threshold = std::max(threshold, MinThreshold);
+            stars = detectStarsInternal(gray, width, height, threshold, params.maxStarSize);
+        }
+
+        // If too many stars (>3x target), raise threshold slightly
+        if (static_cast<int>(stars.size()) > target * 3) {
+            threshold *= 1.3;
+            stars = detectStarsInternal(gray, width, height, threshold, params.maxStarSize);
+        }
+
+        return stars;
+    }
+
+    // Fixed threshold mode
     return detectStarsInternal(gray, width, height, params.threshold, params.maxStarSize);
 }
 

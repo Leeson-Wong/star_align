@@ -40,17 +40,19 @@ struct RawImage {
 static bool loadRawToBGRA(const std::string& path, RawImage& out) {
     LibRaw lr;
 
-    // Configure processing parameters (match previous hand-tuned pipeline)
+    // Configure processing parameters to match DSS's linear-space processing.
+    // DSS detects stars on linear (non-gamma-corrected) data, so we must
+    // disable gamma, exposure boost, and auto brightness to stay in linear space.
     lr.imgdata.params.output_bps    = 16;       // 16-bit output
     lr.imgdata.params.use_camera_wb = 1;        // use camera WB if available
-    lr.imgdata.params.use_auto_wb   = 1;        // fallback to auto WB
-    lr.imgdata.params.no_auto_bright = 0;       // enable auto brightness
+    lr.imgdata.params.use_auto_wb   = 0;        // no auto WB (DSS doesn't use it for detection)
+    lr.imgdata.params.no_auto_bright = 1;       // disable auto brightness
     lr.imgdata.params.user_qual     = 3;        // AHD demosaic (best quality)
     lr.imgdata.params.output_color  = 1;        // sRGB
-    lr.imgdata.params.gamm[0]       = 2.2;      // gamma power
-    lr.imgdata.params.gamm[1]       = 4.5;      // gamma toe slope
-    lr.imgdata.params.exp_correc    = 1;        // enable exposure correction
-    lr.imgdata.params.exp_shift     = 1.20;     // exposure boost for astrophotography
+    lr.imgdata.params.gamm[0]       = 1.0;      // linear (no gamma)
+    lr.imgdata.params.gamm[1]       = 1.0;      // linear toe slope
+    lr.imgdata.params.exp_correc    = 0;        // disable exposure correction
+    lr.imgdata.params.exp_shift     = 1.0;      // no exposure boost
     lr.imgdata.params.highlight     = 0;        // clip highlights
     lr.imgdata.params.fbdd_noiserd  = 0;        // disable FBDD noise reduction (preserve stars)
 
@@ -212,7 +214,8 @@ int main(int argc, char* argv[]) {
     int stride = refImg.width * 4 * sizeof(uint16_t);
 
     StarAlign::DetectParams params;
-    params.threshold = 0.32;
+    params.autoThreshold = true;
+    params.targetStarCount = 80;
 
     auto refStars = StarAlign::detectStars(refImg.bgra.data(), refImg.width, refImg.height,
                                             stride, params);

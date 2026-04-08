@@ -32,6 +32,8 @@ struct AlignResult {
 struct DetectParams {
     double threshold = 0.10;    // Detection threshold (0.0~1.0), higher is stricter
     int    maxStarSize = 50;    // Maximum star radius (pixels)
+    bool   autoThreshold = false; // If true, iteratively adjust threshold to find ~targetStarCount stars
+    int    targetStarCount = 80;  // Target number of stars for auto-threshold
 };
 
 // -------- Core functions --------
@@ -39,7 +41,7 @@ struct DetectParams {
 // Detect stars in a BGRA16 image.
 // pData:  BGRA16 raw data, 4 x uint16_t per pixel (B, G, R, A), row-major.
 // stride: byte stride per row (>= width * 4 * sizeof(uint16_t)).
-// Internally uses (B + G + R) / 3 as luminance, mapped to [0, 256).
+// Internally uses HSL luminance (max+min)/2, mapped to [0, 256).
 std::vector<Star> detectStars(
     const uint16_t* pData,
     int width,
