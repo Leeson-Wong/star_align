@@ -26,6 +26,10 @@ struct AlignResult {
     double  offsetY = 0.0;      // y offset (pixels)
     double  angle = 0.0;        // Rotation angle (radians)
     int     matchedStars = 0;   // Number of matched star pairs
+
+    // Full bilinear transform parameters (tgt -> ref)
+    double a0 = 0, a1 = 1, a2 = 0, a3 = 0;
+    double b0 = 0, b1 = 0, b2 = 1, b3 = 0;
 };
 
 // -------- Star detection parameters --------
@@ -68,16 +72,16 @@ AlignResult alignImages(
 
 // -------- BGRA16 image transform --------
 
-// Apply rigid transform (translation + rotation) to a BGRA16 image.
+// Apply bilinear/affine transform to a BGRA16 image using alignment result.
 // srcBGRA:  BGRA16 raw data, 4 x uint16_t per pixel (B, G, R, A), row-major.
 // stride:   byte stride per row (>= width * 4 * sizeof(uint16_t)).
-// offsetX/Y: translation to apply (pixels). The output pixel at (ox,oy) is
-//            sampled from source at (ox+offsetX, oy+offsetY) after rotation.
-// angle:     rotation angle in radians (counter-clockwise around image center).
+// align:    alignment result containing full bilinear parameters.
 // Returns transformed BGRA16 data (same dimensions as input).
+// For each output pixel, an inverse affine transform maps back to the source
+// image, then bicubic (Catmull-Rom) interpolation is applied.
 std::vector<uint16_t> transformBGRA(
     const uint16_t* srcBGRA, int width, int height, int stride,
-    double offsetX, double offsetY, double angle);
+    const AlignResult& align);
 
 // Stack multiple BGRA16 images using per-frame alignment.
 // images:     array of pointers to BGRA16 data (each width*height*4 elements).

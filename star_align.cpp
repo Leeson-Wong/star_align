@@ -1122,6 +1122,16 @@ AlignResult computeAlignmentInternal(const std::vector<Star>& refStars,
     if (!ok)
         return result;
 
+    // Store full bilinear transform parameters
+    result.a0 = params.a0;
+    result.a1 = params.a1;
+    result.a2 = params.a2;
+    result.a3 = params.a3;
+    result.b0 = params.b0;
+    result.b1 = params.b1;
+    result.b2 = params.b2;
+    result.b3 = params.b3;
+
     // Extract offsets from a0, b0
     result.offsetX = params.a0 * fXWidth;
     result.offsetY = params.b0 * fYHeight;
@@ -1183,6 +1193,112 @@ inline uint16_t bilinearChannel(const uint16_t* src, int width, int height, int 
                      + v11 * fx       * fy;
 
     return static_cast<uint16_t>(std::min(65535.0, std::max(0.0, std::round(val))));
+}
+
+// Catmull-Rom bicubic interpolation for one channel of interleaved BGRA16 data.
+inline uint16_t bicubicChannel(const uint16_t* src, int width, int height, int stride,
+                                double srcX, double srcY, int channelOffset) {
+    srcX = std::max(0.0, std::min(static_cast<double>(width - 1), srcX));
+    srcY = std::max(0.0, std::min(static_cast<double>(height - 1), srcY));
+
+    const int x0 = static_cast<int>(std::floor(srcX));
+    const int y0 = static_cast<int>(std::floor(srcY));
+    const double fx = srcX - x0;
+    const double fy = srcY - y0;
+
+    // Catmull-Rom weights
+    auto catmullRom = [](double t) -> double {
+        // w(t) = 0.5 * (|2t|^3 - |2t|^2 - |t| + 1)  for |t| <= 1
+        //        0.5 * (-|2t-3|^3 + 5|2t-3|^2 - 8|2t-3| + 4) for 1 < |t| <= 2
+        // But more standard formulation:
+        // w(t) for t in {-1, 0, 1, 2} offsets
+        const double t2 = t * t;
+        const double t3 = t2 * t;
+        if (t <= 1.0)
+            return 1.5 * t3 - 2.5 * t2 + 1.0;
+        else
+            return -0.5 * t3 + 2.5 * t2 - 4.0 * t + 2.0;
+    };
+
+    auto readCh = [&](int x, int y) -> double {
+        if (x < 0) x = 0;
+        if (x >= width) x = width - 1;
+        if (y < 0) y = 0;
+        if (y >= height) y = height - 1;
+        const uint16_t* pRow = reinterpret_cast<const uint16_t*>(
+            reinterpret_cast<const uint8_t*>(src) + static_cast<size_t>(y) * stride);
+        return pRow[x * 4 + channelOffset];
+    };
+
+    double val = 0.0;
+    for (int j = -1; j <= 2; ++j) {
+        const double wy = catmullRom(std::abs(fy - j));
+        if (wy == 0.0) continue;
+        const int yy = y0 + j;
+        for (int i = -1; i <= 2; ++i) {
+            const double wx = catmullRom(std::abs(fx - i));
+            if (wx == 0.0) continue;
+            val += readCh(x0 + i, yy) * wx * wy;
+        }
+    }
+
+    return static_cast<uint16_t>(std::min(65535.0, std::max(0.0, std::round(val))));
+}
+
+// Build a 2x3 affine matrix from BilinearParams and invert it.
+// The bilinear transform maps tgt -> ref:
+//   refX = (a0 + a1*(tgtX/W) + a2*(tgtY/H) + a3*(tgtX/W)*(tgtY/H)) * W
+//   refY = (b0 + b1*(tgtX/W) + b2*(tgtY/H) + b3*(tgtX/W)*(tgtY/H)) * H
+//
+// For small rotations this is nearly affine. We evaluate the Jacobian at the
+// image center to get a local affine approximation, then invert it for
+// inverse mapping in transformBGRA.
+//
+// The affine matrix maps normalized tgt coords to normalized ref coords:
+//   [refXn]   [m00 m01] [tgtXn]   [tx]
+//   [refYn] = [m10 m11] [tgtYn] + [ty]
+//
+// The inverse maps ref coords -> tgt coords.
+struct AffineInverse {
+    // Inverse affine: tgtXn = inv00 * refXn + inv01 * refYn + invtx
+    //                 tgtYn = inv10 * refXn + inv11 * refYn + invty
+    double inv00, inv01, invtx;
+    double inv10, inv11, invty;
+};
+
+AffineInverse computeAffineInverse(const AlignResult& align, double W, double H) {
+    // Evaluate bilinear at center to get translation
+    const double cXn = 0.5; // center X normalized
+    const double cYn = 0.5; // center Y normalized
+
+    const double refCXn = align.a0 + align.a1 * cXn + align.a2 * cYn + align.a3 * cXn * cYn;
+    const double refCYn = align.b0 + align.b1 * cXn + align.b2 * cYn + align.b3 * cXn * cYn;
+
+    // Jacobian at center (partial derivatives)
+    const double m00 = align.a1 + align.a3 * cYn;  // d(refXn)/d(tgtXn)
+    const double m01 = align.a2 + align.a3 * cXn;  // d(refXn)/d(tgtYn)
+    const double m10 = align.b1 + align.b3 * cYn;  // d(refYn)/d(tgtXn)
+    const double m11 = align.b2 + align.b3 * cXn;  // d(refYn)/d(tgtYn)
+
+    // Translation: ref_center - M * tgt_center
+    const double tx = refCXn - (m00 * cXn + m01 * cYn);
+    const double ty = refCYn - (m10 * cXn + m11 * cYn);
+
+    // Invert the 2x2 matrix
+    const double det = m00 * m11 - m01 * m10;
+    const double invDet = 1.0 / det;
+
+    AffineInverse inv;
+    inv.inv00 =  m11 * invDet;
+    inv.inv01 = -m01 * invDet;
+    inv.inv10 = -m10 * invDet;
+    inv.inv11 =  m00 * invDet;
+
+    // Inverse translation: invtx = -invM * t
+    inv.invtx = -(inv.inv00 * tx + inv.inv01 * ty);
+    inv.invty = -(inv.inv10 * tx + inv.inv11 * ty);
+
+    return inv;
 }
 
 } // anonymous namespace
@@ -1263,35 +1379,42 @@ AlignResult alignImages(
 
 std::vector<uint16_t> transformBGRA(
     const uint16_t* srcBGRA, int width, int height, int stride,
-    double offsetX, double offsetY, double angle)
+    const AlignResult& align)
 {
     const size_t totalPixels = static_cast<size_t>(width) * static_cast<size_t>(height);
     std::vector<uint16_t> dstBGRA(totalPixels * 4, 0);
 
-    if (!srcBGRA || width <= 0 || height <= 0)
+    if (!srcBGRA || width <= 0 || height <= 0 || !align.success)
         return dstBGRA;
 
     const int effectiveStride = (stride > 0) ? stride : (width * 4 * sizeof(uint16_t));
-    const double cx = width  / 2.0;
-    const double cy = height / 2.0;
-    const double cosA = std::cos(angle);
-    const double sinA = std::sin(angle);
+    const double W = static_cast<double>(width);
+    const double H = static_cast<double>(height);
+
+    // Compute inverse affine from the bilinear parameters
+    const AffineInverse inv = computeAffineInverse(align, W, H);
 
     for (int oy = 0; oy < height; ++oy) {
         for (int ox = 0; ox < width; ++ox) {
-            // Inverse transform: output (ox,oy) -> source continuous coords
-            const double dx = ox - cx - offsetX;
-            const double dy = oy - cy - offsetY;
-            const double srcFX =  cosA * dx + sinA * dy + cx;
-            const double srcFY = -sinA * dx + cosA * dy + cy;
+            // Normalize output coords to [0, 1]
+            const double refXn = static_cast<double>(ox) / W;
+            const double refYn = static_cast<double>(oy) / H;
+
+            // Inverse affine: ref normalized -> tgt normalized
+            const double tgtXn = inv.inv00 * refXn + inv.inv01 * refYn + inv.invtx;
+            const double tgtYn = inv.inv10 * refXn + inv.inv11 * refYn + inv.invty;
+
+            // Back to pixel coords
+            const double srcFX = tgtXn * W;
+            const double srcFY = tgtYn * H;
 
             const size_t dstIdx = (static_cast<size_t>(oy) * width + ox) * 4;
 
-            if (srcFX >= 0.0 && srcFX < width && srcFY >= 0.0 && srcFY < height) {
-                // Valid source region: bilinear interpolation
-                dstBGRA[dstIdx + 0] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 0);
-                dstBGRA[dstIdx + 1] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 1);
-                dstBGRA[dstIdx + 2] = bilinearChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 2);
+            if (srcFX >= 0.0 && srcFX < W && srcFY >= 0.0 && srcFY < H) {
+                // Bicubic interpolation
+                dstBGRA[dstIdx + 0] = bicubicChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 0);
+                dstBGRA[dstIdx + 1] = bicubicChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 1);
+                dstBGRA[dstIdx + 2] = bicubicChannel(srcBGRA, width, height, effectiveStride, srcFX, srcFY, 2);
                 dstBGRA[dstIdx + 3] = 0xFFFF;
             } else {
                 // Out of bounds: black, alpha=0 marks invalid
@@ -1337,8 +1460,7 @@ std::vector<uint16_t> stackBGRAImages(
         if (!alignments[f].success) continue;
 
         auto transformed = transformBGRA(images[f], width, height, effectiveStride,
-                                          alignments[f].offsetX, alignments[f].offsetY,
-                                          alignments[f].angle);
+                                          alignments[f]);
 
         for (size_t p = 0; p < totalPixels; ++p) {
             // Alpha != 0 means valid pixel

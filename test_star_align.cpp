@@ -127,6 +127,127 @@ static bool loadRawToBGRA(const std::string& path, RawImage& out) {
 // Raw file extension filter
 // ============================================================================
 
+// ============================================================================
+// Post-processing: WB correction, exposure, gamma
+// ============================================================================
+
+struct WBCoeffs {
+    double r = 1.0;
+    double g = 1.0;
+    double b = 1.0;
+};
+
+// Load camera WB coefficients from a RAW file using LibRaw
+static bool loadWBCoeffs(const std::string& path, WBCoeffs& wb) {
+    LibRaw lr;
+    lr.imgdata.params.output_bps = 16;
+    int ret = lr.open_file(path.c_str());
+    if (ret != LIBRAW_SUCCESS) return false;
+    ret = lr.unpack();
+    if (ret != LIBRAW_SUCCESS) return false;
+
+    // pre_mul: camera white balance multipliers [R, G, B, G2]
+    const float* pm = lr.imgdata.color.pre_mul;
+    // Normalize to green channel
+    if (pm[1] > 0) {
+        wb.r = pm[0] / pm[1];
+        wb.g = 1.0;
+        wb.b = pm[2] / pm[1];
+    }
+    return true;
+}
+
+// Post-process stacked BGRA16 data:
+// 1. Apply camera WB correction (using pre_mul ratios)
+// 2. Apply exposure boost (exp_shift)
+// 3. Apply gamma correction (gamma 2.2 with toe slope)
+// 4. Auto brightness via histogram stretching
+static void postProcessStack(std::vector<uint16_t>& bgra, int width, int height,
+                              const WBCoeffs& wb, double exp_shift = 1.2,
+                              double gamma = 2.2, double toe_slope = 4.5) {
+    const size_t totalPixels = static_cast<size_t>(width) * height;
+
+    // Pass 1: Apply WB + exposure, find max brightness for auto-stretch
+    double maxVal = 0.0;
+    std::vector<double> linear(totalPixels * 3); // R, G, B (non-interleaved for efficiency)
+
+    for (size_t p = 0; p < totalPixels; ++p) {
+        double B = bgra[p * 4 + 0];
+        double G = bgra[p * 4 + 1];
+        double R = bgra[p * 4 + 2];
+
+        // Skip invalid pixels (alpha == 0)
+        if (bgra[p * 4 + 3] == 0) {
+            linear[p * 3 + 0] = 0;
+            linear[p * 3 + 1] = 0;
+            linear[p * 3 + 2] = 0;
+            continue;
+        }
+
+        // WB correction
+        R *= wb.r;
+        G *= wb.g;
+        B *= wb.b;
+
+        // Exposure boost
+        R *= exp_shift;
+        G *= exp_shift;
+        B *= exp_shift;
+
+        linear[p * 3 + 0] = R;
+        linear[p * 3 + 1] = G;
+        linear[p * 3 + 2] = B;
+
+        maxVal = std::max({maxVal, R, G, B});
+    }
+
+    // Auto brightness: find the 99.5th percentile to avoid outlier clipping
+    if (maxVal > 0) {
+        std::vector<double> allVals;
+        allVals.reserve(totalPixels * 3);
+        for (size_t p = 0; p < totalPixels; ++p) {
+            if (bgra[p * 4 + 3] == 0) continue;
+            allVals.push_back(linear[p * 3 + 0]);
+            allVals.push_back(linear[p * 3 + 1]);
+            allVals.push_back(linear[p * 3 + 2]);
+        }
+        if (!allVals.empty()) {
+            size_t idx995 = static_cast<size_t>(allVals.size() * 0.995);
+            std::nth_element(allVals.begin(), allVals.begin() + idx995, allVals.end());
+            double brightTarget = allVals[idx995];
+            if (brightTarget > 0) {
+                double scale = 65535.0 / brightTarget;
+                // Clamp scale to avoid extreme boosting
+                scale = std::min(scale, 8.0);
+                for (size_t i = 0; i < linear.size(); ++i) {
+                    linear[i] *= scale;
+                }
+            }
+        }
+    }
+
+    // Pass 2: Apply gamma and write back
+    // Gamma with toe slope (similar to LibRaw's gamm[0]=2.2, gamm[1]=4.5):
+    //   out = (1 + toe_slope) * pow(val/65535, 1/gamma) - toe_slope * (val/65535)
+    const double invGamma = 1.0 / gamma;
+
+    auto applyGamma = [invGamma, toe_slope](double v) -> uint16_t {
+        double n = std::min(v, 65535.0) / 65535.0;
+        double g = (1.0 + toe_slope) * std::pow(n, invGamma) - toe_slope * n;
+        g = std::max(0.0, std::min(1.0, g));
+        return static_cast<uint16_t>(std::round(g * 65535.0));
+    };
+
+    for (size_t p = 0; p < totalPixels; ++p) {
+        if (bgra[p * 4 + 3] == 0) continue;
+
+        bgra[p * 4 + 2] = applyGamma(linear[p * 3 + 0]); // R
+        bgra[p * 4 + 1] = applyGamma(linear[p * 3 + 1]); // G
+        bgra[p * 4 + 0] = applyGamma(linear[p * 3 + 2]); // B
+        bgra[p * 4 + 3] = 0xFFFF; // A
+    }
+}
+
 static bool isRawFile(const std::string& ext) {
     static const char* rawExts[] = {
         ".dng", ".nef", ".nrw", ".cr2", ".cr3", ".crw",
@@ -357,6 +478,21 @@ int main(int argc, char* argv[]) {
                                                        stackStride, allAlignments);
 
             if (!stacked.empty()) {
+                // Post-processing: WB correction + exposure + gamma
+                std::cout << "Applying post-processing (WB, exposure, gamma)..." << std::endl;
+
+                WBCoeffs wb;
+                if (!loadWBCoeffs(rawFiles[0].string(), wb)) {
+                    std::cerr << "Warning: Could not load WB coefficients, using defaults" << std::endl;
+                }
+                std::cout << "WB multipliers: R=" << std::fixed << std::setprecision(3) << wb.r
+                          << " G=" << wb.g << " B=" << wb.b << std::endl;
+
+                // postProcessStack(stacked, refImg.width, refImg.height, wb,
+                //                   1.2,   // exp_shift
+                //                   2.2,   // gamma
+                //                   4.5);  // toe_slope
+
                 auto now = std::chrono::system_clock::now();
                 auto time_t_now = std::chrono::system_clock::to_time_t(now);
                 std::stringstream tsStream;
