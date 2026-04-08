@@ -106,6 +106,8 @@ constexpr double RadiusFactor = 2.35 / 1.5;
 constexpr float  TriangleMaxRatio = 0.9f;
 constexpr float  TriangleTolerance = 0.002f;
 constexpr double MaxStarDistanceDelta = 2.0;
+constexpr int    MinPairsToBisquared = 25;
+constexpr int    MinPairsToBicubic = 40;
 
 // ---- Utility functions ----
 
@@ -175,6 +177,81 @@ struct PixelDirection {
 };
 
 // ---- Matrix inversion helpers ----
+
+bool solveLinearSystem(std::vector<std::vector<double>>& A,
+                       std::vector<double>& b,
+                       std::vector<double>& x) {
+    const size_t N = A.size();
+    if (N == 0 || b.size() != N) return false;
+    for (const auto& row : A)
+        if (row.size() != N) return false;
+
+    for (size_t col = 0; col < N; ++col) {
+        size_t pivot = col;
+        double maxAbs = std::abs(A[col][col]);
+        for (size_t row = col + 1; row < N; ++row) {
+            const double v = std::abs(A[row][col]);
+            if (v > maxAbs) {
+                maxAbs = v;
+                pivot = row;
+            }
+        }
+        if (maxAbs < 1e-12) return false;
+
+        if (pivot != col) {
+            std::swap(A[pivot], A[col]);
+            std::swap(b[pivot], b[col]);
+        }
+
+        const double div = A[col][col];
+        for (size_t j = col; j < N; ++j)
+            A[col][j] /= div;
+        b[col] /= div;
+
+        for (size_t row = 0; row < N; ++row) {
+            if (row == col) continue;
+            const double factor = A[row][col];
+            if (std::abs(factor) < 1e-20) continue;
+            for (size_t j = col; j < N; ++j)
+                A[row][j] -= factor * A[col][j];
+            b[row] -= factor * b[col];
+        }
+    }
+
+    x = b;
+    return true;
+}
+
+bool solveLeastSquares(const std::vector<std::vector<double>>& Mcols,
+                       const std::vector<double>& rhs,
+                       std::vector<double>& result) {
+    const size_t P = Mcols.size();
+    if (P == 0) return false;
+    const size_t N = rhs.size();
+    for (const auto& col : Mcols)
+        if (col.size() != N) return false;
+    if (N < P) return false;
+
+    std::vector<std::vector<double>> MTM(P, std::vector<double>(P, 0.0));
+    std::vector<double> MTRhs(P, 0.0);
+
+    for (size_t i = 0; i < P; ++i) {
+        for (size_t j = i; j < P; ++j) {
+            double sum = 0.0;
+            for (size_t k = 0; k < N; ++k)
+                sum += Mcols[i][k] * Mcols[j][k];
+            MTM[i][j] = sum;
+            MTM[j][i] = sum;
+        }
+
+        double sum = 0.0;
+        for (size_t k = 0; k < N; ++k)
+            sum += Mcols[i][k] * rhs[k];
+        MTRhs[i] = sum;
+    }
+
+    return solveLinearSystem(MTM, MTRhs, result);
+}
 
 // Invert a 4x4 matrix using Gauss-Jordan elimination.
 // mat is modified in-place. Returns true on success.
@@ -274,18 +351,65 @@ bool solveLeastSquares4(const std::vector<double>& M_col0,
 // ---- Bilinear parameters ----
 
 struct BilinearParams {
+    TransformType type = TransformType::Bilinear;
+
     double a0 = 0, a1 = 0, a2 = 0, a3 = 0;
+    double a4 = 0, a5 = 0, a6 = 0, a7 = 0, a8 = 0;
+    double a9 = 0, a10 = 0, a11 = 0, a12 = 0, a13 = 0, a14 = 0, a15 = 0;
     double b0 = 0, b1 = 0, b2 = 0, b3 = 0;
+    double b4 = 0, b5 = 0, b6 = 0, b7 = 0, b8 = 0;
+    double b9 = 0, b10 = 0, b11 = 0, b12 = 0, b13 = 0, b14 = 0, b15 = 0;
     double fXWidth = 1.0, fYWidth = 1.0;
 
     // Transform a target point to reference coordinates
     void transform(double tgtX, double tgtY, double& refX, double& refY) const {
         const double X = tgtX / fXWidth;
         const double Y = tgtY / fYWidth;
-        refX = (a0 + a1 * X + a2 * Y + a3 * X * Y) * fXWidth;
-        refY = (b0 + b1 * X + b2 * Y + b3 * X * Y) * fYWidth;
+
+        double xn = 0.0;
+        double yn = 0.0;
+
+        if (type == TransformType::Bicubic) {
+            const double X2 = X * X;
+            const double X3 = X2 * X;
+            const double Y2 = Y * Y;
+            const double Y3 = Y2 * Y;
+
+            xn = a0 + a1 * X + a2 * Y + a3 * X * Y
+               + a4 * X2 + a5 * Y2 + a6 * X2 * Y + a7 * X * Y2 + a8 * X2 * Y2
+               + a9 * X3 + a10 * Y3 + a11 * X3 * Y + a12 * X * Y3
+               + a13 * X3 * Y2 + a14 * X2 * Y3 + a15 * X3 * Y3;
+
+            yn = b0 + b1 * X + b2 * Y + b3 * X * Y
+               + b4 * X2 + b5 * Y2 + b6 * X2 * Y + b7 * X * Y2 + b8 * X2 * Y2
+               + b9 * X3 + b10 * Y3 + b11 * X3 * Y + b12 * X * Y3
+               + b13 * X3 * Y2 + b14 * X2 * Y3 + b15 * X3 * Y3;
+        } else if (type == TransformType::Bisquared) {
+            const double X2 = X * X;
+            const double Y2 = Y * Y;
+
+            xn = a0 + a1 * X + a2 * Y + a3 * X * Y
+               + a4 * X2 + a5 * Y2 + a6 * X2 * Y + a7 * X * Y2 + a8 * X2 * Y2;
+
+            yn = b0 + b1 * X + b2 * Y + b3 * X * Y
+               + b4 * X2 + b5 * Y2 + b6 * X2 * Y + b7 * X * Y2 + b8 * X2 * Y2;
+        } else {
+            xn = a0 + a1 * X + a2 * Y + a3 * X * Y;
+            yn = b0 + b1 * X + b2 * Y + b3 * X * Y;
+        }
+
+        refX = xn * fXWidth;
+        refY = yn * fYWidth;
     }
 };
+
+TransformType pickTransformationType(const size_t nrVotingPairs) {
+    if (nrVotingPairs >= static_cast<size_t>(MinPairsToBicubic))
+        return TransformType::Bicubic;
+    if (nrVotingPairs >= static_cast<size_t>(MinPairsToBisquared))
+        return TransformType::Bisquared;
+    return TransformType::Bilinear;
+}
 
 // ---- Internal star detection ----
 
@@ -651,11 +775,16 @@ bool computeTransformation(const std::vector<VotingPair>& pairs,
                            const std::vector<Star>& refStars,
                            const std::vector<Star>& tgtStars,
                            double fXWidth, double fYWidth,
+                           TransformType type,
                            BilinearParams& params) {
     const size_t N = pairs.size();
-    if (N < 4) return false;
+    size_t nrParams = 4;
+    if (type == TransformType::Bisquared) nrParams = 9;
+    else if (type == TransformType::Bicubic) nrParams = 16;
+    if (N < nrParams) return false;
 
-    std::vector<double> M0(N), M1(N), M2(N), M3(N), rhsX(N), rhsY(N);
+    std::vector<std::vector<double>> M(nrParams, std::vector<double>(N, 0.0));
+    std::vector<double> rhsX(N), rhsY(N);
 
     for (size_t i = 0; i < N; ++i) {
         double refX, refY, tgtX, tgtY;
@@ -674,18 +803,58 @@ bool computeTransformation(const std::vector<VotingPair>& pairs,
 
         const double X1 = tgtX / fXWidth;
         const double Y1 = tgtY / fYWidth;
-        M0[i] = 1.0;
-        M1[i] = X1;
-        M2[i] = Y1;
-        M3[i] = X1 * Y1;
+
+        M[0][i] = 1.0;
+        M[1][i] = X1;
+        M[2][i] = Y1;
+        M[3][i] = X1 * Y1;
+
+        if (nrParams >= 9) {
+            const double X2 = X1 * X1;
+            const double Y2 = Y1 * Y1;
+            M[4][i] = X2;
+            M[5][i] = Y2;
+            M[6][i] = X2 * Y1;
+            M[7][i] = X1 * Y2;
+            M[8][i] = X2 * Y2;
+
+            if (nrParams >= 16) {
+                const double X3 = X2 * X1;
+                const double Y3 = Y2 * Y1;
+                M[9][i] = X3;
+                M[10][i] = Y3;
+                M[11][i] = X3 * Y1;
+                M[12][i] = X1 * Y3;
+                M[13][i] = X3 * Y2;
+                M[14][i] = X2 * Y3;
+                M[15][i] = X3 * Y3;
+            }
+        }
     }
 
-    double A[4], B[4];
-    if (!solveLeastSquares4(M0, M1, M2, M3, rhsX, A)) return false;
-    if (!solveLeastSquares4(M0, M1, M2, M3, rhsY, B)) return false;
+    std::vector<double> A, B;
+    if (!solveLeastSquares(M, rhsX, A)) return false;
+    if (!solveLeastSquares(M, rhsY, B)) return false;
 
+    params.type = type;
     params.a0 = A[0]; params.a1 = A[1]; params.a2 = A[2]; params.a3 = A[3];
     params.b0 = B[0]; params.b1 = B[1]; params.b2 = B[2]; params.b3 = B[3];
+    params.a4 = params.a5 = params.a6 = params.a7 = params.a8 = 0.0;
+    params.b4 = params.b5 = params.b6 = params.b7 = params.b8 = 0.0;
+    params.a9 = params.a10 = params.a11 = params.a12 = params.a13 = params.a14 = params.a15 = 0.0;
+    params.b9 = params.b10 = params.b11 = params.b12 = params.b13 = params.b14 = params.b15 = 0.0;
+
+    if (nrParams >= 9) {
+        params.a4 = A[4]; params.a5 = A[5]; params.a6 = A[6]; params.a7 = A[7]; params.a8 = A[8];
+        params.b4 = B[4]; params.b5 = B[5]; params.b6 = B[6]; params.b7 = B[7]; params.b8 = B[8];
+    }
+    if (nrParams >= 16) {
+        params.a9 = A[9]; params.a10 = A[10]; params.a11 = A[11]; params.a12 = A[12];
+        params.a13 = A[13]; params.a14 = A[14]; params.a15 = A[15];
+        params.b9 = B[9]; params.b10 = B[10]; params.b11 = B[11]; params.b12 = B[12];
+        params.b13 = B[13]; params.b14 = B[14]; params.b15 = B[15];
+    }
+
     params.fXWidth = fXWidth;
     params.fYWidth = fYWidth;
     return true;
@@ -738,6 +907,7 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
                                       const std::vector<Star>& refStars,
                                       const std::vector<Star>& tgtStars,
                                       double fXWidth, double fYHeight,
+                                      TransformType type,
                                       BilinearParams& outParams) {
     bool bResult = false;
     bool bEnd = false;
@@ -749,7 +919,9 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
     std::vector<VotingPair> vWorking = vPairs;
 
     while (!bEnd && !bResult) {
-        constexpr size_t nrPairs = 8;
+        size_t nrPairs = 8;
+        if (type == TransformType::Bisquared) nrPairs = 9;
+        else if (type == TransformType::Bicubic) nrPairs = 16;
 
         vAddedPairs.clear();
         vTestedPairs.clear();
@@ -772,7 +944,7 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
 
         if (vTestedPairs.size() == nrPairs) {
             BilinearParams projection;
-            if (computeTransformation(vTestedPairs, refStars, tgtStars, fXWidth, fYHeight, projection)) {
+            if (computeTransformation(vTestedPairs, refStars, tgtStars, fXWidth, fYHeight, type, projection)) {
                 std::vector<double> vDistances;
                 const auto [fMaxDistance, maxDistanceIndex] = computeDistances(
                     vTestedPairs, refStars, tgtStars, projection, vDistances);
@@ -853,7 +1025,7 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
 
             if (lAddedPair >= 0) {
                 BilinearParams projection;
-                if (computeTransformation(vTempPairs, refStars, tgtStars, fXWidth, fYHeight, projection)) {
+                if (computeTransformation(vTempPairs, refStars, tgtStars, fXWidth, fYHeight, type, projection)) {
                     const double maxDist = computeMaxDistance(vTempPairs, refStars, tgtStars, projection).first;
                     if (maxDist <= 2.0) {
                         vTestedPairs = vTempPairs;
@@ -886,11 +1058,13 @@ bool computeSigmaClippingTransformation(std::vector<VotingPair>& vPairs,
                                          const std::vector<Star>& refStars,
                                          const std::vector<Star>& tgtStars,
                                          double fXWidth, double fYHeight,
+                                         TransformType type,
                                          BilinearParams& params) {
     // Step 1: Compute a base transformation without corner locking
     BilinearParams baseParams;
     std::vector<VotingPair> basePairs = vPairs;
-    bool bResult = computeCoordinatesTransformation(basePairs, refStars, tgtStars, fXWidth, fYHeight, baseParams);
+    bool bResult = computeCoordinatesTransformation(basePairs, refStars, tgtStars, fXWidth, fYHeight,
+                                                    TransformType::Bilinear, baseParams);
 
     if (!bResult)
         return false;
@@ -919,7 +1093,8 @@ bool computeSigmaClippingTransformation(std::vector<VotingPair>& vPairs,
         [](const VotingPair& a, const VotingPair& b) { return a.nrVotes > b.nrVotes; });
 
     // Step 4: Compute final transformation with corners locked
-    bResult = computeCoordinatesTransformation(cornerPairs, refStars, tgtStars, fXWidth, fYHeight, params);
+    bResult = computeCoordinatesTransformation(cornerPairs, refStars, tgtStars, fXWidth, fYHeight,
+                                               type, params);
 
     if (bResult) {
         // Remove corner pairs from final output
@@ -939,6 +1114,7 @@ bool computeSigmaClippingTransformation(std::vector<VotingPair>& vPairs,
 bool computeLargeTriangleTransformation(const std::vector<Star>& refStars,
                                          const std::vector<Star>& tgtStars,
                                          double fXWidth, double fYHeight,
+                                         int* outMatchedPairs,
                                          BilinearParams& params) {
     const auto refDists = computeStarDistances(refStars);
     const auto tgtDists = computeStarDistances(tgtStars);
@@ -1017,9 +1193,14 @@ bool computeLargeTriangleTransformation(const std::vector<Star>& refStars,
         size_t lCut = 0;
         while (lCut < vVotingPairs.size() && vVotingPairs[lCut].nrVotes >= lMinNrVotes)
             ++lCut;
-        vVotingPairs.resize(lCut + 1);
+        vVotingPairs.resize(lCut);
 
-        bResult = computeSigmaClippingTransformation(vVotingPairs, refStars, tgtStars, fXWidth, fYHeight, params);
+        const TransformType type = pickTransformationType(vVotingPairs.size());
+        bResult = computeSigmaClippingTransformation(vVotingPairs, refStars, tgtStars, fXWidth, fYHeight,
+                                                     type, params);
+
+        if (bResult && outMatchedPairs)
+            *outMatchedPairs = static_cast<int>(vVotingPairs.size());
 
         // If successful and a3/b3 are negligible, zero them out for linear case
         if (bResult) {
@@ -1039,6 +1220,7 @@ bool computeMatchingTriangleTransformation(const std::vector<StarTriangle>& refT
                                              const std::vector<Star>& refStars,
                                              const std::vector<Star>& tgtStars,
                                              double fXWidth, double fYHeight,
+                                             int* outMatchedPairs,
                                              BilinearParams& params) {
     const auto tgtTriangles = computeTriangles(tgtStars);
 
@@ -1084,7 +1266,12 @@ bool computeMatchingTriangleTransformation(const std::vector<StarTriangle>& refT
             ++lCut;
         vVotingPairs.resize(lCut);
 
-        bResult = computeSigmaClippingTransformation(vVotingPairs, refStars, tgtStars, fXWidth, fYHeight, params);
+        const TransformType type = pickTransformationType(vVotingPairs.size());
+        bResult = computeSigmaClippingTransformation(vVotingPairs, refStars, tgtStars, fXWidth, fYHeight,
+                                                     type, params);
+
+        if (bResult && outMatchedPairs)
+            *outMatchedPairs = static_cast<int>(vVotingPairs.size());
 
         if (bResult) {
             if (std::abs(params.a3) < 1e-10 && std::abs(params.b3) < 1e-10) {
@@ -1111,26 +1298,54 @@ AlignResult computeAlignmentInternal(const std::vector<Star>& refStars,
     const double fYHeight = static_cast<double>(imageHeight);
 
     BilinearParams params;
+    int matchedPairs = 0;
 
     // Try large triangle transformation first, fall back to matching triangle
-    bool ok = computeLargeTriangleTransformation(refStars, tgtStars, fXWidth, fYHeight, params);
+    bool ok = computeLargeTriangleTransformation(refStars, tgtStars, fXWidth, fYHeight, &matchedPairs, params);
     if (!ok) {
         const auto refTriangles = computeTriangles(refStars);
-        ok = computeMatchingTriangleTransformation(refTriangles, refStars, tgtStars, fXWidth, fYHeight, params);
+        ok = computeMatchingTriangleTransformation(refTriangles, refStars, tgtStars, fXWidth, fYHeight,
+                                                   &matchedPairs, params);
     }
 
     if (!ok)
         return result;
+
+    result.type = params.type;
 
     // Store full bilinear transform parameters
     result.a0 = params.a0;
     result.a1 = params.a1;
     result.a2 = params.a2;
     result.a3 = params.a3;
+    result.a4 = params.a4;
+    result.a5 = params.a5;
+    result.a6 = params.a6;
+    result.a7 = params.a7;
+    result.a8 = params.a8;
+    result.a9 = params.a9;
+    result.a10 = params.a10;
+    result.a11 = params.a11;
+    result.a12 = params.a12;
+    result.a13 = params.a13;
+    result.a14 = params.a14;
+    result.a15 = params.a15;
     result.b0 = params.b0;
     result.b1 = params.b1;
     result.b2 = params.b2;
     result.b3 = params.b3;
+    result.b4 = params.b4;
+    result.b5 = params.b5;
+    result.b6 = params.b6;
+    result.b7 = params.b7;
+    result.b8 = params.b8;
+    result.b9 = params.b9;
+    result.b10 = params.b10;
+    result.b11 = params.b11;
+    result.b12 = params.b12;
+    result.b13 = params.b13;
+    result.b14 = params.b14;
+    result.b15 = params.b15;
 
     // Extract offsets from a0, b0
     result.offsetX = params.a0 * fXWidth;
@@ -1142,12 +1357,7 @@ AlignResult computeAlignmentInternal(const std::vector<Star>& refStars,
     params.transform(fXWidth, 0, pt2x, pt2y);
     result.angle = std::atan2(pt2y - pt1y, pt2x - pt1x);
 
-    // Count matched pairs (non-zero vote pairs)
-    result.matchedStars = 0;
-    // The matched star count is derived from the final working pairs in the transformation.
-    // Since we don't return that directly, estimate from the bilinear fit quality.
-    // We'll use a minimum of the pair count that contributed.
-    result.matchedStars = std::min(static_cast<int>(refStars.size()), static_cast<int>(tgtStars.size()));
+    result.matchedStars = matchedPairs;
 
     result.success = true;
     return result;
@@ -1266,19 +1476,175 @@ struct AffineInverse {
     double inv10, inv11, invty;
 };
 
+// Evaluate forward transform (tgt normalized -> ref normalized) and Jacobian.
+inline void evalTransformAndJacobian(const AlignResult& align, double X, double Y,
+                                     double& refXn, double& refYn,
+                                     double& j00, double& j01, double& j10, double& j11)
+{
+    const double X2 = X * X;
+    const double Y2 = Y * Y;
+    const double X3 = X2 * X;
+    const double Y3 = Y2 * Y;
+
+    if (align.type == TransformType::Bicubic) {
+        refXn = align.a0 + align.a1 * X + align.a2 * Y + align.a3 * X * Y
+              + align.a4 * X2 + align.a5 * Y2 + align.a6 * X2 * Y + align.a7 * X * Y2 + align.a8 * X2 * Y2
+              + align.a9 * X3 + align.a10 * Y3 + align.a11 * X3 * Y + align.a12 * X * Y3
+              + align.a13 * X3 * Y2 + align.a14 * X2 * Y3 + align.a15 * X3 * Y3;
+
+        refYn = align.b0 + align.b1 * X + align.b2 * Y + align.b3 * X * Y
+              + align.b4 * X2 + align.b5 * Y2 + align.b6 * X2 * Y + align.b7 * X * Y2 + align.b8 * X2 * Y2
+              + align.b9 * X3 + align.b10 * Y3 + align.b11 * X3 * Y + align.b12 * X * Y3
+              + align.b13 * X3 * Y2 + align.b14 * X2 * Y3 + align.b15 * X3 * Y3;
+
+        j00 = align.a1 + align.a3 * Y + 2.0 * align.a4 * X + 2.0 * align.a6 * X * Y + align.a7 * Y2
+            + 2.0 * align.a8 * X * Y2 + 3.0 * align.a9 * X2 + 3.0 * align.a11 * X2 * Y + align.a12 * Y3
+            + 3.0 * align.a13 * X2 * Y2 + 2.0 * align.a14 * X * Y3 + 3.0 * align.a15 * X2 * Y3;
+        j01 = align.a2 + align.a3 * X + 2.0 * align.a5 * Y + align.a6 * X2 + 2.0 * align.a7 * X * Y
+            + 2.0 * align.a8 * X2 * Y + 3.0 * align.a10 * Y2 + align.a11 * X3 + 3.0 * align.a12 * X * Y2
+            + 2.0 * align.a13 * X3 * Y + 3.0 * align.a14 * X2 * Y2 + 3.0 * align.a15 * X3 * Y2;
+        j10 = align.b1 + align.b3 * Y + 2.0 * align.b4 * X + 2.0 * align.b6 * X * Y + align.b7 * Y2
+            + 2.0 * align.b8 * X * Y2 + 3.0 * align.b9 * X2 + 3.0 * align.b11 * X2 * Y + align.b12 * Y3
+            + 3.0 * align.b13 * X2 * Y2 + 2.0 * align.b14 * X * Y3 + 3.0 * align.b15 * X2 * Y3;
+        j11 = align.b2 + align.b3 * X + 2.0 * align.b5 * Y + align.b6 * X2 + 2.0 * align.b7 * X * Y
+            + 2.0 * align.b8 * X2 * Y + 3.0 * align.b10 * Y2 + align.b11 * X3 + 3.0 * align.b12 * X * Y2
+            + 2.0 * align.b13 * X3 * Y + 3.0 * align.b14 * X2 * Y2 + 3.0 * align.b15 * X3 * Y2;
+        return;
+    }
+
+    if (align.type == TransformType::Bisquared) {
+        refXn = align.a0 + align.a1 * X + align.a2 * Y + align.a3 * X * Y
+              + align.a4 * X2 + align.a5 * Y2 + align.a6 * X2 * Y + align.a7 * X * Y2 + align.a8 * X2 * Y2;
+        refYn = align.b0 + align.b1 * X + align.b2 * Y + align.b3 * X * Y
+              + align.b4 * X2 + align.b5 * Y2 + align.b6 * X2 * Y + align.b7 * X * Y2 + align.b8 * X2 * Y2;
+
+        j00 = align.a1 + align.a3 * Y + 2.0 * align.a4 * X + 2.0 * align.a6 * X * Y + align.a7 * Y2 + 2.0 * align.a8 * X * Y2;
+        j01 = align.a2 + align.a3 * X + 2.0 * align.a5 * Y + align.a6 * X2 + 2.0 * align.a7 * X * Y + 2.0 * align.a8 * X2 * Y;
+        j10 = align.b1 + align.b3 * Y + 2.0 * align.b4 * X + 2.0 * align.b6 * X * Y + align.b7 * Y2 + 2.0 * align.b8 * X * Y2;
+        j11 = align.b2 + align.b3 * X + 2.0 * align.b5 * Y + align.b6 * X2 + 2.0 * align.b7 * X * Y + 2.0 * align.b8 * X2 * Y;
+        return;
+    }
+
+    refXn = align.a0 + align.a1 * X + align.a2 * Y + align.a3 * X * Y;
+    refYn = align.b0 + align.b1 * X + align.b2 * Y + align.b3 * X * Y;
+
+    j00 = align.a1 + align.a3 * Y;
+    j01 = align.a2 + align.a3 * X;
+    j10 = align.b1 + align.b3 * Y;
+    j11 = align.b2 + align.b3 * X;
+}
+
+bool invertTransformNewton(const AlignResult& align,
+                          double refXn, double refYn,
+                          double seedXn, double seedYn,
+                          double& outXn, double& outYn)
+{
+    double x = seedXn;
+    double y = seedYn;
+
+    for (int it = 0; it < 8; ++it) {
+        double fx = 0.0, fy = 0.0;
+        double j00 = 0.0, j01 = 0.0, j10 = 0.0, j11 = 0.0;
+        evalTransformAndJacobian(align, x, y, fx, fy, j00, j01, j10, j11);
+
+        const double ex = fx - refXn;
+        const double ey = fy - refYn;
+        if (std::abs(ex) + std::abs(ey) < 1e-9) {
+            outXn = x;
+            outYn = y;
+            return true;
+        }
+
+        const double det = j00 * j11 - j01 * j10;
+        if (std::abs(det) < 1e-12) {
+            break;
+        }
+
+        // Newton step: [dx dy]^T = J^-1 * e
+        const double invDet = 1.0 / det;
+        const double dx = ( j11 * ex - j01 * ey) * invDet;
+        const double dy = (-j10 * ex + j00 * ey) * invDet;
+
+        x -= dx;
+        y -= dy;
+
+        if (std::abs(dx) + std::abs(dy) < 1e-10) {
+            outXn = x;
+            outYn = y;
+            return true;
+        }
+    }
+
+    // Final residual check for fallback acceptance.
+    double fx = 0.0, fy = 0.0;
+    double j00 = 0.0, j01 = 0.0, j10 = 0.0, j11 = 0.0;
+    evalTransformAndJacobian(align, x, y, fx, fy, j00, j01, j10, j11);
+    const double ex = std::abs(fx - refXn);
+    const double ey = std::abs(fy - refYn);
+
+    outXn = x;
+    outYn = y;
+    return (ex + ey) < 1e-5;
+}
+
 AffineInverse computeAffineInverse(const AlignResult& align, double W, double H) {
     // Evaluate bilinear at center to get translation
     const double cXn = 0.5; // center X normalized
     const double cYn = 0.5; // center Y normalized
 
-    const double refCXn = align.a0 + align.a1 * cXn + align.a2 * cYn + align.a3 * cXn * cYn;
-    const double refCYn = align.b0 + align.b1 * cXn + align.b2 * cYn + align.b3 * cXn * cYn;
+    const double X = cXn;
+    const double Y = cYn;
+    const double X2 = X * X;
+    const double Y2 = Y * Y;
+    const double X3 = X2 * X;
+    const double Y3 = Y2 * Y;
 
-    // Jacobian at center (partial derivatives)
-    const double m00 = align.a1 + align.a3 * cYn;  // d(refXn)/d(tgtXn)
-    const double m01 = align.a2 + align.a3 * cXn;  // d(refXn)/d(tgtYn)
-    const double m10 = align.b1 + align.b3 * cYn;  // d(refYn)/d(tgtXn)
-    const double m11 = align.b2 + align.b3 * cXn;  // d(refYn)/d(tgtYn)
+    double refCXn = 0.0;
+    double refCYn = 0.0;
+    double m00 = 0.0, m01 = 0.0, m10 = 0.0, m11 = 0.0;
+
+    if (align.type == TransformType::Bicubic) {
+        refCXn = align.a0 + align.a1 * X + align.a2 * Y + align.a3 * X * Y
+               + align.a4 * X2 + align.a5 * Y2 + align.a6 * X2 * Y + align.a7 * X * Y2 + align.a8 * X2 * Y2
+               + align.a9 * X3 + align.a10 * Y3 + align.a11 * X3 * Y + align.a12 * X * Y3
+               + align.a13 * X3 * Y2 + align.a14 * X2 * Y3 + align.a15 * X3 * Y3;
+
+        refCYn = align.b0 + align.b1 * X + align.b2 * Y + align.b3 * X * Y
+               + align.b4 * X2 + align.b5 * Y2 + align.b6 * X2 * Y + align.b7 * X * Y2 + align.b8 * X2 * Y2
+               + align.b9 * X3 + align.b10 * Y3 + align.b11 * X3 * Y + align.b12 * X * Y3
+               + align.b13 * X3 * Y2 + align.b14 * X2 * Y3 + align.b15 * X3 * Y3;
+
+        m00 = align.a1 + align.a3 * Y + 2.0 * align.a4 * X + 2.0 * align.a6 * X * Y + align.a7 * Y2
+            + 2.0 * align.a8 * X * Y2 + 3.0 * align.a9 * X2 + 3.0 * align.a11 * X2 * Y + align.a12 * Y3
+            + 3.0 * align.a13 * X2 * Y2 + 2.0 * align.a14 * X * Y3 + 3.0 * align.a15 * X2 * Y3;
+        m01 = align.a2 + align.a3 * X + 2.0 * align.a5 * Y + align.a6 * X2 + 2.0 * align.a7 * X * Y
+            + 2.0 * align.a8 * X2 * Y + 3.0 * align.a10 * Y2 + align.a11 * X3 + 3.0 * align.a12 * X * Y2
+            + 2.0 * align.a13 * X3 * Y + 3.0 * align.a14 * X2 * Y2 + 3.0 * align.a15 * X3 * Y2;
+        m10 = align.b1 + align.b3 * Y + 2.0 * align.b4 * X + 2.0 * align.b6 * X * Y + align.b7 * Y2
+            + 2.0 * align.b8 * X * Y2 + 3.0 * align.b9 * X2 + 3.0 * align.b11 * X2 * Y + align.b12 * Y3
+            + 3.0 * align.b13 * X2 * Y2 + 2.0 * align.b14 * X * Y3 + 3.0 * align.b15 * X2 * Y3;
+        m11 = align.b2 + align.b3 * X + 2.0 * align.b5 * Y + align.b6 * X2 + 2.0 * align.b7 * X * Y
+            + 2.0 * align.b8 * X2 * Y + 3.0 * align.b10 * Y2 + align.b11 * X3 + 3.0 * align.b12 * X * Y2
+            + 2.0 * align.b13 * X3 * Y + 3.0 * align.b14 * X2 * Y2 + 3.0 * align.b15 * X3 * Y2;
+    } else if (align.type == TransformType::Bisquared) {
+        refCXn = align.a0 + align.a1 * X + align.a2 * Y + align.a3 * X * Y
+               + align.a4 * X2 + align.a5 * Y2 + align.a6 * X2 * Y + align.a7 * X * Y2 + align.a8 * X2 * Y2;
+        refCYn = align.b0 + align.b1 * X + align.b2 * Y + align.b3 * X * Y
+               + align.b4 * X2 + align.b5 * Y2 + align.b6 * X2 * Y + align.b7 * X * Y2 + align.b8 * X2 * Y2;
+
+        m00 = align.a1 + align.a3 * Y + 2.0 * align.a4 * X + 2.0 * align.a6 * X * Y + align.a7 * Y2 + 2.0 * align.a8 * X * Y2;
+        m01 = align.a2 + align.a3 * X + 2.0 * align.a5 * Y + align.a6 * X2 + 2.0 * align.a7 * X * Y + 2.0 * align.a8 * X2 * Y;
+        m10 = align.b1 + align.b3 * Y + 2.0 * align.b4 * X + 2.0 * align.b6 * X * Y + align.b7 * Y2 + 2.0 * align.b8 * X * Y2;
+        m11 = align.b2 + align.b3 * X + 2.0 * align.b5 * Y + align.b6 * X2 + 2.0 * align.b7 * X * Y + 2.0 * align.b8 * X2 * Y;
+    } else {
+        refCXn = align.a0 + align.a1 * X + align.a2 * Y + align.a3 * X * Y;
+        refCYn = align.b0 + align.b1 * X + align.b2 * Y + align.b3 * X * Y;
+
+        m00 = align.a1 + align.a3 * Y;
+        m01 = align.a2 + align.a3 * X;
+        m10 = align.b1 + align.b3 * Y;
+        m11 = align.b2 + align.b3 * X;
+    }
 
     // Translation: ref_center - M * tgt_center
     const double tx = refCXn - (m00 * cXn + m01 * cYn);
@@ -1286,13 +1652,25 @@ AffineInverse computeAffineInverse(const AlignResult& align, double W, double H)
 
     // Invert the 2x2 matrix
     const double det = m00 * m11 - m01 * m10;
-    const double invDet = 1.0 / det;
-
+    
+    // Check for singular matrix (det near 0)
+    // This can happen when transformation is nearly degenerate (scale=0 or extreme skew)
+    const double absDet = std::fabs(det);
+    const double detThreshold = 1e-10;  // Minimum determinant magnitude
+    
     AffineInverse inv;
-    inv.inv00 =  m11 * invDet;
-    inv.inv01 = -m01 * invDet;
-    inv.inv10 = -m10 * invDet;
-    inv.inv11 =  m00 * invDet;
+    if (absDet < detThreshold) {
+        // Singular or near-singular matrix: return identity transform
+        // This will map output coordinates straight to themselves, preserving image as-is
+        inv.inv00 = 1.0; inv.inv01 = 0.0; inv.invtx = 0.0;
+        inv.inv10 = 0.0; inv.inv11 = 1.0; inv.invty = 0.0;
+    } else {
+        const double invDet = 1.0 / det;
+        inv.inv00 =  m11 * invDet;
+        inv.inv01 = -m01 * invDet;
+        inv.inv10 = -m10 * invDet;
+        inv.inv11 =  m00 * invDet;
+    }
 
     // Inverse translation: invtx = -invM * t
     inv.invtx = -(inv.inv00 * tx + inv.inv01 * ty);
@@ -1391,7 +1769,7 @@ std::vector<uint16_t> transformBGRA(
     const double W = static_cast<double>(width);
     const double H = static_cast<double>(height);
 
-    // Compute inverse affine from the bilinear parameters
+    // Affine inverse is only used as an initial seed for per-pixel Newton inversion.
     const AffineInverse inv = computeAffineInverse(align, W, H);
 
     for (int oy = 0; oy < height; ++oy) {
@@ -1399,16 +1777,27 @@ std::vector<uint16_t> transformBGRA(
             // Normalize output coords to [0, 1]
             const double refXn = static_cast<double>(ox) / W;
             const double refYn = static_cast<double>(oy) / H;
+            const size_t dstIdx = (static_cast<size_t>(oy) * width + ox) * 4;
 
-            // Inverse affine: ref normalized -> tgt normalized
-            const double tgtXn = inv.inv00 * refXn + inv.inv01 * refYn + inv.invtx;
-            const double tgtYn = inv.inv10 * refXn + inv.inv11 * refYn + inv.invty;
+            // Initial guess from global affine approximation.
+            const double seedXn = inv.inv00 * refXn + inv.inv01 * refYn + inv.invtx;
+            const double seedYn = inv.inv10 * refXn + inv.inv11 * refYn + inv.invty;
+
+            // Refine inverse mapping using full transform (DSS-like inverse solve behavior).
+            double tgtXn = seedXn;
+            double tgtYn = seedYn;
+            const bool solved = invertTransformNewton(align, refXn, refYn, seedXn, seedYn, tgtXn, tgtYn);
+            if (!solved) {
+                dstBGRA[dstIdx + 0] = 0;
+                dstBGRA[dstIdx + 1] = 0;
+                dstBGRA[dstIdx + 2] = 0;
+                dstBGRA[dstIdx + 3] = 0;
+                continue;
+            }
 
             // Back to pixel coords
             const double srcFX = tgtXn * W;
             const double srcFY = tgtYn * H;
-
-            const size_t dstIdx = (static_cast<size_t>(oy) * width + ox) * 4;
 
             if (srcFX >= 0.0 && srcFX < W && srcFY >= 0.0 && srcFY < H) {
                 // Bicubic interpolation
@@ -1434,11 +1823,22 @@ std::vector<uint16_t> stackBGRAImages(
     int width, int height, int stride,
     const std::vector<AlignResult>& alignments)
 {
-    const size_t totalChannels = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+    // Validate input parameters
     const size_t nFrames = images.size();
+    if (nFrames == 0 || alignments.size() != nFrames) {
+        return {};  // Invalid input: return empty
+    }
+    
+    if (width <= 0 || height <= 0) {
+        return {};  // Invalid dimensions: return empty
+    }
+    
+    // Check for null pointers in images array
+    for (const auto* pImg : images) {
+        if (!pImg) return {};  // Null pointer detected
+    }
 
-    if (nFrames == 0 || alignments.size() != nFrames)
-        return {};
+    const size_t totalChannels = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
 
     const int effectiveStride = (stride > 0) ? stride : (width * 4 * sizeof(uint16_t));
 

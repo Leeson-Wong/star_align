@@ -10,6 +10,14 @@
 
 namespace StarAlign {
 
+enum class TransformType {
+    Linear = 0,
+    Bilinear = 1,
+    Bisquared = 2,
+    Bicubic = 3,
+    None = 4,
+};
+
 // -------- Detected star --------
 struct Star {
     double x = 0.0;            // Centroid position (pixel coordinates)
@@ -27,9 +35,17 @@ struct AlignResult {
     double  angle = 0.0;        // Rotation angle (radians)
     int     matchedStars = 0;   // Number of matched star pairs
 
-    // Full bilinear transform parameters (tgt -> ref)
+    TransformType type = TransformType::Bilinear;
+
+    // Full transform parameters (tgt -> ref)
+    // x = (a0 + a1*X + a2*Y + ...)*W, y = (b0 + b1*X + b2*Y + ...)*H
+    // where X=tgtX/W, Y=tgtY/H and the used terms depend on `type`.
     double a0 = 0, a1 = 1, a2 = 0, a3 = 0;
+    double a4 = 0, a5 = 0, a6 = 0, a7 = 0, a8 = 0;
+    double a9 = 0, a10 = 0, a11 = 0, a12 = 0, a13 = 0, a14 = 0, a15 = 0;
     double b0 = 0, b1 = 0, b2 = 1, b3 = 0;
+    double b4 = 0, b5 = 0, b6 = 0, b7 = 0, b8 = 0;
+    double b9 = 0, b10 = 0, b11 = 0, b12 = 0, b13 = 0, b14 = 0, b15 = 0;
 };
 
 // -------- Star detection parameters --------

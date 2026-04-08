@@ -494,66 +494,77 @@ int main(int argc, char* argv[]) {
         std::cout << std::endl;
         std::cout << "--- Stacking BGRA16 images ---" << std::endl;
 
+        // Verify reference frame is valid
+        if (refImg.bgra.empty() || refImg.width <= 0 || refImg.height <= 0) {
+            std::cerr << "Error: Reference image is invalid for stacking" << std::endl;
+            return 1;
+        }
+
         // Collect BGRA16 data from all frames
         std::vector<const uint16_t*> bgraPtrs;
-        std::vector<std::vector<uint16_t>> bgraStorage(rawFiles.size());
+        std::vector<std::vector<uint16_t>> bgraStorage;
 
         for (size_t fi = 0; fi < rawFiles.size(); ++fi) {
             RawImage img;
             if (!loadRawToBGRA(rawFiles[fi].string(), img)) {
                 std::cerr << "Failed to reload " << rawFiles[fi].filename().string() << " for stacking" << std::endl;
-                continue;
+                return 1;  // Stop on load failure - cannot proceed with missing frame
             }
-            bgraStorage[fi] = std::move(img.bgra);
-            bgraPtrs.push_back(bgraStorage[fi].data());
+            bgraStorage.push_back(std::move(img.bgra));
+            bgraPtrs.push_back(bgraStorage.back().data());
         }
 
-        if (bgraPtrs.size() == rawFiles.size()) {
-            int stackStride = refImg.width * 4 * sizeof(uint16_t);
-            auto stacked = StarAlign::stackBGRAImages(bgraPtrs, refImg.width, refImg.height,
-                                                       stackStride, allAlignments);
+        // Sanity check: ensure all required frames are loaded
+        std::cout << "Loaded " << bgraPtrs.size() << " frames for stacking" << std::endl;
+        if (bgraPtrs.size() != rawFiles.size() || bgraPtrs.size() != allAlignments.size()) {
+            std::cerr << "Error: Frame count mismatch (loaded=" << bgraPtrs.size()
+                      << ", files=" << rawFiles.size() << ", alignments=" << allAlignments.size() << ")" << std::endl;
+            return 1;
+        }
 
-            if (!stacked.empty()) {
-                // Post-processing: WB correction + exposure + gamma
-                std::cout << "Applying post-processing (WB, exposure, gamma)..." << std::endl;
+        int stackStride = refImg.width * 4 * sizeof(uint16_t);
+        auto stacked = StarAlign::stackBGRAImages(bgraPtrs, refImg.width, refImg.height,
+                                                   stackStride, allAlignments);
 
-                WBCoeffs wb;
-                if (!loadWBCoeffs(rawFiles[0].string(), wb)) {
-                    std::cerr << "Warning: Could not load WB coefficients, using defaults" << std::endl;
-                }
-                std::cout << "WB multipliers: R=" << std::fixed << std::setprecision(3) << wb.r
-                          << " G=" << wb.g << " B=" << wb.b << std::endl;
+        if (!stacked.empty()) {
+            // Post-processing: WB correction + exposure + gamma
+            std::cout << "Applying post-processing (WB, exposure, gamma)..." << std::endl;
 
-                // postProcessStack(stacked, refImg.width, refImg.height, wb,
-                //                   1.2,   // exp_shift
-                //                   2.2,   // gamma
-                //                   4.5);  // toe_slope
+            WBCoeffs wb;
+            if (!loadWBCoeffs(rawFiles[0].string(), wb)) {
+                std::cerr << "Warning: Could not load WB coefficients, using defaults" << std::endl;
+            }
+            std::cout << "WB multipliers: R=" << std::fixed << std::setprecision(3) << wb.r
+                      << " G=" << wb.g << " B=" << wb.b << std::endl;
 
-                auto now = std::chrono::system_clock::now();
-                auto time_t_now = std::chrono::system_clock::to_time_t(now);
-                std::stringstream tsStream;
-                tsStream << std::put_time(std::localtime(&time_t_now), "_%Y%m%d_%H%M%S");
-                std::string outPath = stackOutputPath + tsStream.str() + ".raw";
+            // postProcessStack(stacked, refImg.width, refImg.height, wb,
+            //                   1.2,   // exp_shift
+            //                   2.2,   // gamma
+            //                   4.5);  // toe_slope
 
-                std::ofstream outFile(outPath, std::ios::binary);
-                if (outFile.is_open()) {
-                    outFile.write(reinterpret_cast<const char*>(stacked.data()),
-                                  stacked.size() * sizeof(uint16_t));
-                    outFile.close();
-                    std::cout << "Stacked " << bgraPtrs.size() << " frames -> "
-                              << outPath << " ("
-                              << refImg.width << "x" << refImg.height << " BGRA16, "
-                              << stacked.size() * sizeof(uint16_t) << " bytes)" << std::endl;
-                } else {
-                    std::cerr << "Error: Cannot write to " << outPath << std::endl;
-                    return 1;
-                }
+            auto now = std::chrono::system_clock::now();
+            auto time_t_now = std::chrono::system_clock::to_time_t(now);
+            std::stringstream tsStream;
+            tsStream << std::put_time(std::localtime(&time_t_now), "_%Y%m%d_%H%M%S");
+            std::string outPath = stackOutputPath + tsStream.str() + ".raw";
+
+            std::ofstream outFile(outPath, std::ios::binary);
+            if (outFile.is_open()) {
+                outFile.write(reinterpret_cast<const char*>(stacked.data()),
+                              stacked.size() * sizeof(uint16_t));
+                outFile.close();
+                std::cout << "Stacked " << bgraPtrs.size() << " frames -> "
+                          << outPath << " ("
+                          << refImg.width << "x" << refImg.height << " BGRA16, "
+                          << stacked.size() * sizeof(uint16_t) << " bytes)" << std::endl;
             } else {
-                std::cerr << "Error: Stacking failed" << std::endl;
+                std::cerr << "Error: Cannot write to " << outPath << std::endl;
                 return 1;
             }
         } else {
-            std::cerr << "Error: Could not reload all frames for stacking" << std::endl;
+            std::cerr << "Error: Stacking failed - stackBGRAImages returned empty result" << std::endl;
+            std::cerr << "  loaded=" << bgraPtrs.size() << ", files=" << rawFiles.size()
+                      << ", alignments=" << allAlignments.size() << std::endl;
             return 1;
         }
     }
