@@ -4,11 +4,11 @@
 #include "cfa.h"
 #include "DSSCommon.h"
 #include "BitmapExtraInfo.h"
-#include "fitsio.h"
+// fitsio.h not available in this build - uses forward-declared fitsfile*
+// cfitsio.lib not linked
 
-#if defined(_MSC_VER) && (_MSC_VER >= 1020)	
-#pragma comment(lib, "cfitsio.lib")
-#endif
+// Forward declare fitsfile to avoid needing fitsio.h
+struct fitsfile;
 
 class CFITSHeader
 {
@@ -232,4 +232,3 @@ bool IsFITSBilinear();
 bool IsFITSAHD();
 double GetFITSBrightnessRatio();
 void GetFITSRatio(double& fRed, double& fGreen, double& fBlue);
-

@@ -11,10 +11,12 @@
 #include <sstream>
 #include <cstring>
 #include <filesystem>
+#include <chrono>
 
 #include "../libraw/include/libraw_types.h"
 
 class QString;
+class QStringList;
 typedef double qreal;
 typedef long long qint64;
 typedef unsigned long long quint64;
@@ -51,6 +53,8 @@ public:
 	QPoint(int x, int y) : xp(x), yp(y) {}
 	int x() const { return xp; }
 	int y() const { return yp; }
+	int& rx() { return xp; }
+	int& ry() { return yp; }
 };
 
 // --- QPointF ---
@@ -71,6 +75,8 @@ public:
 	QPointF operator-(const QPointF& o) const { return QPointF(xp - o.xp, yp - o.yp); }
 	QPointF& operator+=(const QPointF& o) { xp += o.xp; yp += o.yp; return *this; }
 	QPointF& operator*=(qreal s) { xp *= s; yp *= s; return *this; }
+	void setX(qreal x) { xp = x; }
+	void setY(qreal y) { yp = y; }
 };
 
 // ============================================================
@@ -86,6 +92,7 @@ public:
 	QByteArray(int size, char c = 0) : data_(size, c) {}
 
 	int size() const { return static_cast<int>(data_.size()); }
+	int length() const { return size(); }
 	bool isEmpty() const { return data_.empty(); }
 	const char* constData() const { return data_.c_str(); }
 	const char* data() const { return data_.c_str(); }
@@ -102,15 +109,6 @@ private:
 // ============================================================
 // QString and QStringList
 // ============================================================
-
-// --- QStringList (must be before QString because split() returns it) ---
-class QStringList : public std::vector<QString>
-{
-public:
-	QStringList() = default;
-	int count() const { return static_cast<int>(size()); }
-	bool isEmpty() const { return empty(); }
-};
 
 // --- QString ---
 class QString
@@ -150,6 +148,7 @@ public:
 	}
 
 	QString arg(int i) const { return QString(std::to_string(i)); }
+	QString arg(unsigned long i) const { return QString(std::to_string(i)); }
 	QString arg(size_t i) const { return QString(std::to_string(i)); }
 	QString arg(double d, int w = 0, char f = 'g', int prec = 6) const {
 		std::ostringstream oss;
@@ -158,10 +157,30 @@ public:
 		return QString(oss.str());
 	}
 	QString arg(const QString& s) const { return QString(s.data_); }
+	QString arg(const std::u16string& s) const { std::string narrow; narrow.reserve(s.size()); for (auto c : s) narrow += static_cast<char>(c); return QString(narrow); }
+	QString arg(const char8_t* s) const { return QString(reinterpret_cast<const char*>(s)); }
 	QString arg(const char* s) const { return QString(s); }
+	QString arg(const wchar_t* s) const {
+		std::string narrow;
+		while (*s) narrow += static_cast<char>(*s++);
+		return QString(narrow);
+	}
+	QString arg(const std::u16string& s1, const QString& s2) const {
+		QString result = *this;
+		// Replace %1 with s1, %2 with s2
+		std::string narrow; narrow.reserve(s1.size());
+		for (auto c : s1) narrow += static_cast<char>(c);
+		result = result.replace("%1", narrow.c_str());
+		result = result.replace("%2", s2.toStdString().c_str());
+		return result;
+	}
 
 	int indexOf(const char* s) const { return static_cast<int>(data_.find(s)); }
 	int indexOf(char c) const { return static_cast<int>(data_.find(c)); }
+	int indexOf(const QString& s) const { return static_cast<int>(data_.find(s.data_)); }
+	int indexOf(const char* s, int from) const { return static_cast<int>(data_.find(s, from)); }
+	int indexOf(char c, int from) const { return static_cast<int>(data_.find(c, from)); }
+	int indexOf(const QString& s, int from) const { return static_cast<int>(data_.find(s.data_, from)); }
 	bool startsWith(const char* s) const { return data_.compare(0, strlen(s), s) == 0; }
 	bool startsWith(const QString& s) const { return data_.compare(0, s.data_.size(), s.data_) == 0; }
 	bool endsWith(const char* s) const { size_t len = strlen(s); return data_.size() >= len && data_.compare(data_.size() - len, len, s) == 0; }
@@ -181,10 +200,9 @@ public:
 		return QString(data_.substr(start, end - start + 1));
 	}
 
-	QStringList split(const char* sep) const;
-	QStringList split(const QString& sep) const;
-
 	QByteArray toUtf8() const { return QByteArray(data_.c_str()); }
+	static QString fromUtf8(const char* s) { return QString(s); }
+	static QString fromUtf8(const QByteArray& ba) { return QString(ba.constData()); }
 	std::string toStdString() const { return data_; }
 	std::u16string toStdU16String() const {
 		return std::u16string(data_.begin(), data_.end());
@@ -195,6 +213,11 @@ public:
 	}
 	int compare(const QString& o, bool cs = true) const {
 		return cs ? data_.compare(o.data_) : _stricmp(data_.c_str(), o.data_.c_str());
+	}
+	int compare(const std::u16string& s, bool cs = true) const {
+		std::string narrow; narrow.reserve(s.size());
+		for (auto c : s) narrow += static_cast<char>(c);
+		return cs ? data_.compare(narrow) : _stricmp(data_.c_str(), narrow.c_str());
 	}
 
 	bool operator==(const char* s) const { return data_ == s; }
@@ -282,24 +305,39 @@ public:
 		}
 		return result.trimmed();
 	}
-	QString section(const char* sep, int start, int end = -1) const {
-		QStringList parts = split(sep);
-		if (parts.isEmpty()) return QString();
-		if (start < 0) start = parts.count() + start;
-		if (end < 0) end = parts.count() + end;
-		QString result;
-		for (int i = start; i <= end && i < parts.count(); ++i) {
-			if (i > start) result.data_ += sep;
-			result.data_ += parts[i].data_;
-		}
-		return result;
-	}
+	QString section(const char* sep, int start, int end = -1) const;
+	QStringList split(const char* sep) const;
+	QStringList split(const QString& sep) const;
 
 private:
 	std::string data_;
 };
 
-// QString::split inline implementations
+// --- QStringList (after QString definition) ---
+class QStringList : public std::vector<QString>
+{
+public:
+	QStringList() = default;
+	QStringList(const QString& s) { push_back(s); }
+	QStringList(const std::vector<QString>& v) : std::vector<QString>(v) {}
+	QStringList(std::vector<QString>&& v) : std::vector<QString>(std::move(v)) {}
+	QStringList(std::initializer_list<QString> init) : std::vector<QString>(init) {}
+	int count() const { return static_cast<int>(size()); }
+	bool isEmpty() const { return empty(); }
+	void append(const QString& s) { push_back(s); }
+	bool contains(const QString& s) const { return std::find(begin(), end(), s) != end(); }
+	QString join(const QString& sep) const {
+		std::string result;
+		for (size_t i = 0; i < size(); i++) {
+			if (i > 0) result += sep.toStdString();
+			result += (*this)[i].toStdString();
+		}
+		return QString(result);
+	}
+	QStringList& operator<<(const QString& s) { push_back(s); return *this; }
+};
+
+// QString::split and section implementations (after QStringList)
 inline QStringList QString::split(const char* sep) const {
 	QStringList list;
 	size_t pos = 0;
@@ -317,9 +355,39 @@ inline QStringList QString::split(const QString& sep) const {
 	return split(sep.data_.c_str());
 }
 
+inline QString QString::section(const char* sep, int start, int end) const {
+	QStringList parts = split(sep);
+	if (parts.isEmpty()) return QString();
+	if (start < 0) start = parts.count() + start;
+	if (end < 0) end = parts.count() + end;
+	QString result;
+	for (int i = start; i <= end && i < parts.count(); ++i) {
+		if (i > start) result.data_ += sep;
+		result.data_ += parts[i].data_;
+	}
+	return result;
+}
+
 // ============================================================
 // QVariant (depends on QString)
 // ============================================================
+
+// ============================================================
+// QMetaType (minimal stub)
+// ============================================================
+
+class QMetaType
+{
+public:
+	enum Type { Unknown = -1, Bool = 1, Int = 2, Double = 6, QString = 10 };
+	QMetaType() : type_(Unknown) {}
+	QMetaType(int t) : type_(t) {}
+	int id() const { return type_; }
+	bool isValid() const { return type_ != Unknown; }
+	bool operator==(const QMetaType& o) const { return type_ == o.type_; }
+private:
+	int type_;
+};
 
 class QVariant
 {
@@ -332,13 +400,51 @@ public:
 	QVariant(double d) : type_(Double), boolVal_(false), intVal_(0), uintVal_(0), doubleVal_(d) {}
 	QVariant(const char* s) : type_(String), boolVal_(false), intVal_(0), uintVal_(0), doubleVal_(0.0), strVal_(s) {}
 	QVariant(const std::string& s) : type_(String), boolVal_(false), intVal_(0), uintVal_(0), doubleVal_(0.0), strVal_(s) {}
+	QVariant(const QString& s) : type_(String), boolVal_(false), intVal_(0), uintVal_(0), doubleVal_(0.0), strVal_(s.toStdString()) {}
 
 	bool toBool() const { return type_ == Bool ? boolVal_ : (type_ == Int ? intVal_ != 0 : type_ == Double ? doubleVal_ != 0.0 : false); }
-	int toInt() const { return type_ == Int ? intVal_ : (type_ == Double ? static_cast<int>(doubleVal_) : 0); }
+	int toInt() const { return type_ == Int ? intVal_ : (type_ == Double ? static_cast<int>(doubleVal_) : (type_ == String ? std::stoi(strVal_) : 0)); }
 	unsigned int toUInt() const { return type_ == Int ? uintVal_ : (type_ == Double ? static_cast<unsigned int>(doubleVal_) : 0); }
-	double toDouble() const { return type_ == Double ? doubleVal_ : (type_ == Int ? static_cast<double>(intVal_) : 0.0); }
+	double toDouble() const { return type_ == Double ? doubleVal_ : (type_ == Int ? static_cast<double>(intVal_) : (type_ == String ? std::stod(strVal_) : 0.0)); }
 	QString toString() const { return type_ == String ? QString(strVal_) : QString(); }
+	bool isNull() const { return type_ == Invalid; }
+	bool operator!=(const QVariant& o) const {
+		if (type_ != o.type_) return true;
+		switch (type_) {
+		case Bool: return boolVal_ != o.boolVal_;
+		case Int: return intVal_ != o.intVal_;
+		case Double: return doubleVal_ != o.doubleVal_;
+		case String: return strVal_ != o.strVal_;
+		default: return false;
+		}
+	}
 	bool canConvert(Type) const { return true; }
+	bool canConvert(const QMetaType&) const { return true; }
+	bool convert(const QMetaType& target) {
+		// Convert the held value to match the target type
+		if (target.id() == QMetaType::Int) {
+			intVal_ = toInt(); type_ = Int; return true;
+		}
+		if (target.id() == QMetaType::Double) {
+			doubleVal_ = toDouble(); type_ = Double; return true;
+		}
+		if (target.id() == QMetaType::Bool) {
+			boolVal_ = toBool(); type_ = Bool; return true;
+		}
+		if (target.id() == QMetaType::QString) {
+			strVal_ = toString().toStdString(); type_ = String; return true;
+		}
+		return true;
+	}
+	QMetaType metaType() const {
+		switch (type_) {
+		case Bool: return QMetaType(QMetaType::Bool);
+		case Int: return QMetaType(QMetaType::Int);
+		case Double: return QMetaType(QMetaType::Double);
+		case String: return QMetaType(QMetaType::QString);
+		default: return QMetaType();
+		}
+	}
 
 private:
 	Type type_;
@@ -396,9 +502,12 @@ public:
 
 	static QDateTime currentDateTime() { return QDateTime(); }
 	static QDateTime fromString(const QString&, const char* = nullptr) { return QDateTime(); }
+	static QDateTime fromSecsSinceEpoch(qint64) { return QDateTime(); }
 
 	bool isValid() const { return date_.isValid(); }
 	QString toString(const char* fmt = nullptr) const { return QString(); }
+	qint64 secsTo(const QDateTime&) const { return 0; }
+	bool operator>(const QDateTime&) const { return false; }
 
 private:
 	QDate date_;
@@ -420,6 +529,7 @@ public:
 
 	bool open(int) { return true; }
 	void close() {}
+	bool isOpen() const { return false; }
 	int write(const char* data, int len) { return len; }
 	int write(const std::string& data) { return static_cast<int>(data.size()); }
 	int write(const QByteArray& ba) { return ba.size(); }
@@ -576,6 +686,9 @@ inline int qRed(QRgb c) { return (c >> 16) & 0xFF; }
 inline int qGreen(QRgb c) { return (c >> 8) & 0xFF; }
 inline int qBlue(QRgb c) { return c & 0xFF; }
 inline int qAlpha(QRgb c) { return (c >> 24) & 0xFF; }
+inline QRgb qRgb(int r, int g, int b) { return (0xFFu << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF); }
+inline QRgb qRgba(int r, int g, int b, int a) { return ((a & 0xFF) << 24) | ((r & 0xFF) << 16) | ((g & 0xFF) << 8) | (b & 0xFF); }
+inline QRgba64 qRgba64(uint16_t r, uint16_t g, uint16_t b, uint16_t a = 65535) { return QRgba64::fromRgba64(r, g, b, a); }
 
 // ============================================================
 // Misc Qt types
@@ -603,10 +716,28 @@ public:
 	static constexpr int FloatingPointShortest = -128;
 };
 
+class QMimeType
+{
+public:
+	QMimeType() = default;
+	QString name() const { return QString(); }
+	QStringList suffixes() const { return QStringList(); }
+	bool isValid() const { return false; }
+	bool isInherited(const QString&) const { return false; }
+	bool inherits(const QString&) const { return false; }
+	bool operator==(const QMimeType&) const { return true; }
+	bool operator!=(const QMimeType&) const { return false; }
+};
+
 class QMimeDatabase
 {
 public:
 	QMimeDatabase() = default;
+	QMimeType mimeTypeForFile(const QString&) const { return QMimeType(); }
+	QMimeType mimeTypeForFile(const std::string&) const { return QMimeType(); }
+	QMimeType mimeTypeForFile(const std::filesystem::path&) const { return QMimeType(); }
+	QMimeType mimeTypeForFile(const QFileInfo& fi) const { return QMimeType(); }
+	QMimeType mimeTypeForName(const QString&) const { return QMimeType(); }
 };
 
 class QSettings
@@ -614,11 +745,81 @@ class QSettings
 public:
 	QVariant value(const QString&, const QVariant& = QVariant{}) const { return QVariant{}; }
 	void setValue(const QString&, const QVariant&) {}
+	void beginGroup(const QString&) {}
+	void endGroup() {}
 };
+
+// ============================================================
+// QElapsedTimer
+// ============================================================
+
+class QElapsedTimer
+{
+public:
+	void start() { start_ = std::chrono::steady_clock::now(); }
+	qint64 elapsed() const {
+		auto now = std::chrono::steady_clock::now();
+		return std::chrono::duration_cast<std::chrono::milliseconds>(now - start_).count();
+	}
+	qint64 restart() {
+		qint64 e = elapsed();
+		start_ = std::chrono::steady_clock::now();
+		return e;
+	}
+	bool isValid() const { return start_ != std::chrono::steady_clock::time_point{}; }
+
+private:
+	std::chrono::steady_clock::time_point start_;
+};
+
+// ============================================================
+// QObject forward declaration
+// ============================================================
+
+class QObject {};
+
+// ============================================================
+// QMetaObject (minimal stub for dssbase.h)
+// ============================================================
+
+class QMetaObject
+{
+public:
+	static void connectSlotsByName(QObject*) {}
+};
+
+// ============================================================
+// Platform detection macros
+// ============================================================
+
+#if defined(_WIN32) || defined(_WIN64)
+#define Q_OS_WIN
+#elif defined(__linux__)
+#define Q_OS_LINUX
+#elif defined(__APPLE__)
+#define Q_OS_MACOS
+#define Q_OS_MAC
+#endif
+
+#if defined(__clang__)
+#define Q_CC_CLANG
+#endif
+
+#if defined(_M_X64) || defined(__x86_64__)
+#define Q_PROCESSOR_X86_64
+#endif
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+#define Q_PROCESSOR_ARM
+#endif
 
 // ============================================================
 // Macros
 // ============================================================
 
-#define Q_DECLARE_TR_FUNCTIONS(x)
+#define Q_DECLARE_TR_FUNCTIONS(x) \
+	public: \
+		static QString tr(const char* sourceText, const char* = nullptr, int = -1) { return QString(sourceText); }
 #define _T(x) x
+
+// QCoreApplication::translate is already defined above

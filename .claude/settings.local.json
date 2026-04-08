@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Bash(cmake:*)",
+      "Bash(buildReleasetest_star_align.exe:*)",
+      "Bash(\"E:\\\\final\\\\star_align\\\\build\\\\Release\\\\test_star_align.exe\" \"E:\\\\final\\\\star_align\\\\dngs\")",
+      "Bash(tree:*)",
+      "Bash(findstr:*)",
+      "Bash(cmmake:*)",
+      "Bash(ls:*)",
+      "Bash(xargs:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(cm:*)",
+      "Bash(E:finalstar_alignbuildReleasetest_main.exe)",
+      "Bash(echo:*)",
+      "Bash(cmd.exe /c \"E:\\\\final\\\\star_align\\\\build\\\\Release\\\\test_main.exe && echo SUCCESS\")",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe\" dss.vcxproj /p:Configuration=Release /p:Platform=x64 /t:ClCompile /p:SelectedFiles=\"E:\\\\final\\\\star_align\\\\dss\\\\MatchingStars.cpp\")",
+      "Bash(\"C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe\":*)",
+      "Bash(cmd:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(E:\\\\final\\\\star_align\\\\build_matching.bat:*)",
+      "Bash(powershell:*)",
+      "Bash(del:*)",
+      "Bash(test:*)"
+    ]
+  }
+}

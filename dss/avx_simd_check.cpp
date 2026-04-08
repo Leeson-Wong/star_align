@@ -37,7 +37,8 @@
 #include "avx_includes.h"
 #include "avx_simd_check.h"
 #include "Multitask.h"
-#include <QSysInfo>
+// QSysInfo is provided by dss_qt.h (included via pch.h)
+// <windows.h> is included via pch.h
 
 #if defined (Q_OS_LINUX)
 #include <cpuid.h>
@@ -131,7 +132,7 @@ void AvxSimdCheck::reportCpuType()
 	ZTRACE_RUNTIME("Current architecture: %s", currentArch);
 	std::cerr << "Current architecture: " << currentArch << std::endl;
 
-#if defined(Q_OS_WIN) 
+#if defined(Q_OS_WIN)
 	char architecture[8]{ '\0' };
 	SYSTEM_INFO info;
 

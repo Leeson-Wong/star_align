@@ -3,6 +3,7 @@
 
 #define ZFUNCTRACE_RUNTIME()
 #define ZTRACE_RUNTIME(...)
+#define ZTRACE_DEVELOP(...)
 #define ZASSERTSTATE(x) do { if (!(x)) { } } while(0)
 #define ZASSERT(x) do { if (!(x)) { } } while(0)
 #define ZEXCEPTION_LOCATION() ""

@@ -104,7 +104,7 @@ constexpr double RoundnessTolerance = 2.0;
 constexpr double RadiusFactor = 2.35 / 1.5;
 constexpr float  TriangleMaxRatio = 0.9f;
 constexpr float  TriangleTolerance = 0.002f;
-constexpr double MaxStarDistanceDelta = 2.0;
+constexpr double MaxStarDistanceDelta = 8.0;
 
 constexpr int MIN_PAIRS_TO_BISQUARED = 25;
 constexpr int MIN_PAIRS_TO_BICUBIC   = 40;
@@ -988,13 +988,19 @@ bool computeLargeTriangleTransformation(const std::vector<Star>& refStars,
     std::vector<VotingPair> vVotingPairs;
     initVotingGrid(vVotingPairs, refStars.size(), tgtStars.size());
 
-    for (size_t ti = 0, ri = 0; ti < tgtDists.size() && ri < refDists.size();) {
+    // Limit the number of matching distance pairs to keep runtime bounded.
+    // With n stars, the top ~n longest distances provide the best discriminative power.
+    const size_t maxDistancePairs = std::min({refDists.size(), tgtDists.size(), static_cast<size_t>(refStars.size() * 3)});
+    size_t matchCount = 0;
+
+    for (size_t ti = 0, ri = 0; ti < tgtDists.size() && ri < refDists.size() && matchCount < maxDistancePairs;) {
         const auto& td = tgtDists[tgtIndices[ti]];
         const auto& rd = refDists[refIndices[ri]];
         const float tgtDist = td.distance;
         const float refDist = rd.distance;
 
         if (std::fabs(tgtDist - refDist) <= static_cast<float>(MaxStarDistanceDelta)) {
+            ++matchCount;
             const int lRefStar1 = rd.star1;
             const int lRefStar2 = rd.star2;
             const int lTgtStar1 = td.star1;
@@ -1127,8 +1133,10 @@ AlignResult computeAlignmentInternal(const std::vector<Star>& refStars,
 
     TransformParams params;
 
+    // Try large triangle transformation first (uses longest-distance pairs for matching)
     bool ok = computeLargeTriangleTransformation(refStars, tgtStars, fXWidth, fYHeight, params);
     if (!ok) {
+        // Fall back to matching triangle transformation (triangle pattern matching)
         const auto refTriangles = computeTriangles(refStars);
         ok = computeMatchingTriangleTransformation(refTriangles, refStars, tgtStars, fXWidth, fYHeight, params);
     }

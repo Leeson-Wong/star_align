@@ -4,42 +4,17 @@
 //
 #pragma once
 
-// Qt Files
-#include <QCoreApplication>
-#include <QFileInfo>
-#include <QDir>
-#include <QTimer>
-#include <QString>
-#include <QImage>
-#include <QLocale>
-#include <QSettings>
-#include <QGlobalStatic>
-#include <QMutex>
-#include <QPoint>
-#include <QPointF>
-#include <QAbstractItemModel>
-#include <QStandardItemModel>
-#include <QIcon>
-#include <QDragEnterEvent>
-#include <QMimeData>
-#include <QMimeType>
-#include <QTranslator>
-#include <QLibraryInfo>
-#include <QStandardPaths>
-#include <QValidator>
-#include <QThreadPool>
-#include <QTextLayout>
-#include <QPainter>
-#include <QSortFilterProxyModel>
-#include <QClipboard>
-#include <QActionGroup>
-#include <QMimeDatabase>
-#include <QStandardPaths>
+// Qt stubs (replaces all real Qt includes)
+#include "dss_qt.h"
 
-// Dependency Libraries
-#include <exiv2/exiv2.hpp>
-#include <exiv2/exif.hpp>
-#include <exiv2/easyaccess.hpp>
+// Windows types needed by libraw headers
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
 
 // Standard Libraries
 #include <shared_mutex>
@@ -53,18 +28,45 @@
 #include <future>
 #include <inttypes.h>
 #include <filesystem>
-#include <boost/interprocess/sync/named_mutex.hpp>
-#include <boost/interprocess/sync/scoped_lock.hpp>
 #include <ranges>
+#include <span>
+#include <numeric>
+#include <cmath>
+#include <functional>
+#include <map>
+#include <unordered_map>
+#include <sstream>
+#include <optional>
+#include <tuple>
+#include <memory>
+#include <limits>
+#include <type_traits>
+#include <cassert>
+#include <array>
+#include <bit>
 
-namespace bip = boost::interprocess;
+// C++23 std::byteswap compat shim for C++20
+namespace std {
+	template<typename T>
+	constexpr T byteswap(T value) noexcept {
+		if constexpr (sizeof(T) == 1) return value;
+		else if constexpr (sizeof(T) == 2) {
+			return static_cast<T>(_byteswap_ushort(static_cast<uint16_t>(value)));
+		} else if constexpr (sizeof(T) == 4) {
+			return static_cast<T>(_byteswap_ulong(static_cast<uint32_t>(value)));
+		} else if constexpr (sizeof(T) == 8) {
+			return static_cast<T>(_byteswap_uint64(static_cast<uint64_t>(value)));
+		}
+	}
+}
+
 namespace fs = std::filesystem;
 
 using std::min;
 using std::max;
 
-#include <zexcept.h>
-#include <ztrace.h>
+#include "zexcept.h"
+#include "ztrace.h"
 
 // As this interface is used everywhere for error reporting.
 // If it got too big, or changed a lot, then we could move out to specific cpp files.

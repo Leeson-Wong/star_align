@@ -14,31 +14,28 @@ star_align/
 ├── main.cpp                # 空的测试入口
 ├── libraw/                 # LibRaw 子目录（add_subdirectory）
 ├── dss/                    # DSS 核心代码（静态库）
-│   ├── pch.h               # 预编译头 stub（含 std::span polyfill、C++20 polyfill）
-│   ├── dss_qt.h            # Qt 类型 stub（替代 Qt 依赖）
-│   ├── ztrace.h            # ZTRACE/ZASSERT 空宏
-│   ├── zexcept.h           # ZException/ZInvalidParameter stub
-│   ├── ...                 # 从 DSS 抄来的 .h/.cpp 文件
+│   ├── pch.h               # 预编译头（需改写：去除 Qt/exiv2/boost，改为引用 dss_qt.h）
+│   ├── dss_qt.h            # Qt 类型 stub（替代 Qt 依赖，本项目自建）
+│   ├── ztrace.h            # ZTRACE/ZASSERT 空宏（本项目自建 stub）
+│   ├── zexcept.h           # ZException/ZInvalidParameter stub（本项目自建）
+│   ├── zexcbase.h          # ZClass 异常基类 stub（本项目自建）
+│   ├── ...                 # 从 DSS DeepSkyStackerKernel 抄来的 .h/.cpp 文件
 └── build/                  # CMake 构建目录
 ```
 
 ## 构建配置
 
-- **C++ 标准**: C++17（strict，不使用 /std:c++20）
+- **C++ 标准**: C++20（strict，使用 /std:c++20）
 - **编译器**: MSVC 19.44 (VS 2022)
 - **CMake 最低版本**: 3.16
 - **目标**: `dss` 静态库 + `test_main` 可执行文件
 
 ### CMake 结构
 
-使用 `file(GLOB_RECURSE)` 收集 `dss/*.cpp` 后通过 `list(FILTER ... EXCLUDE)` 排除无法编译的文件：
+使用 `file(GLOB_RECURSE)` 收集 `dss/*.cpp` 中所有源文件，无排除规则：
 
 ```cmake
 file(GLOB_RECURSE DSS_ALL_SOURCES "dss/*.cpp")
-# 排除依赖外部库或复杂未移植类型的文件
-list(FILTER DSS_ALL_SOURCES EXCLUDE REGEX ".*FITSUtil\\.cpp$")
-list(FILTER DSS_ALL_SOURCES EXCLUDE REGEX ".*TIFFUtil\\.cpp$")
-# ... 更多排除规则
 add_library(dss STATIC ${DSS_ALL_SOURCES})
 ```
 
@@ -131,76 +128,74 @@ class ZInvalidParameter : public ZException {
 };
 ```
 
-## C++20 → C++17 适配
+## 文件来源说明
 
-DSS 上游代码使用 C++20 特性。项目约束为 C++17，通过以下方式适配：
+### 从 DSS DeepSkyStackerKernel 同步的文件（91 个同名文件已覆盖）
 
-### pch.h 中提供的 polyfill
+所有同名文件已从 `E:\final\DSS\DeepSkyStackerKernel\` 同步覆盖到 `E:\final\star_align\dss\`，
+使用 DSS 原始代码，配合 C++20 标准直接编译，不再需要 C++20→C++17 适配。
 
-| C++20 特性 | C++17 适配方式 |
-|-----------|--------------|
-| `consteval` | `#define consteval constexpr` |
-| `char8_t` | `typedef unsigned char char8_t`（当 `__cpp_char8_t` 未定义时） |
-| `std::span` | pch.h 中提供完整的 span polyfill 实现 |
-| `std::dynamic_extent` | `static constexpr ptrdiff_t dynamic_extent = -1`（移到 span 定义之前） |
+**关键变化：**
+- `pch.h` — 使用 DSS 原版（包含 Qt、exiv2、boost 引用），需配合 dss_qt.h stub 编译
+- `dssbase.h` — 使用 DSS 原版（DSSBase 类，含 reportError 虚方法）
+- `avx_histogram.h` — 使用 DSS 原版（AvxHistogram + AvxBezierAndSaturation + AVX-256/NonAVX 版本）
+- `avx_cfa.h` — 使用 DSS 原版（AvxCfaProcessing + AVX-256/NonAVX 版本）
+- `avx_simd_factory.h` — 使用 DSS 原版（SimdFactory<CRTP> + SimdSelector 模板）
+- `RegisterEngine.cpp` / `MatchingStars.cpp` 等 — 使用 DSS 原版
 
-### 需要修改 DSS 源码的适配
+### 本项目自建的 stub 文件（DSS 中不存在）
 
-以下修改是最小化的，仅将 C++20 语法替换为 C++17 等价形式：
-
-| 文件 | C++20 特性 | C++17 替换 |
-|------|-----------|-----------|
-| `Stars.h` | `operator<=>` (三路比较) | `operator==` + `operator<` |
-| `Stars.h` | `for (int i = 0; const auto& x : v)` (带初始化器的范围for) | 外部声明计数器变量 |
-| `MatchingStars.h` | `operator<=>` (3处) | `operator==` + `operator<` |
-| `MatchingStars.h` | `constexpr` 构造函数 (CStarDist, CMatchingStars) | 移除 `constexpr` |
-| `MatchingStars.h` | `#include <boost/container/vector.hpp>` | 内联 stub：`namespace boost::container { using vector = std::vector; }` |
-| `MatchingStars.cpp` | `for (size_t i = 0; const auto& x : v)` (2处) | 外部声明计数器变量 |
-| `BackgroundCalibration.h` | `template <IsCalibrator C>` (C++20 concept) | `template <typename C>` |
-| `BackgroundCalibration.h/.cpp` | `char8_t*` | `char*` |
-| `BackgroundCalibration.cpp` | `template <IsCalibrator... Cals>` (5处) | `template <typename... Cals>` |
-| `BackgroundCalibration.cpp` | `TVariant` 依赖类型 | 添加 `typename` 前缀 |
-| `BitmapExtraInfo.h` | 指定初始化器 `.m_Type = ...` | 普通赋值初始化 |
-| `StackingTasks.cpp` | 指定初始化器 `CTaskInfo{.m_dwTaskID = ...}` | 普通构造+赋值 |
-| `dssrect.h` | 缺少 `#include "dss_qt.h"` | 添加 include |
-| `FlatPart.h` | 缺少 `#include <cstdint>` | 添加 include |
-| `DynamicStats.h` | 缺少 `#include <cmath>` | 添加 include |
-| `matrix.h` | `#include "../ZClass/ztrace.h"` | `#include "ztrace.h"` |
-| `RegisterEngine.cpp` | 缺少 `#include "pch.h"` | 添加为第一个 include |
-| `DSSProgress.h` | `#include <pch.h>` (尖括号) | `#include "pch.h"` (双引号) |
+| 文件 | 用途 |
+|------|------|
+| `dss_qt.h` | Qt 类型 stub（DSS 原项目使用真实 Qt） |
+| `ztrace.h` | ZTRACE/ZASSERT 空宏 |
+| `zexcept.h` | ZException/ZInvalidParameter stub |
+| `zexcbase.h` | ZClass 异常基类 stub（include zexcept.h） |
+| `fitsio.h` | CFITSIO 库最小类型 stub |
+| `omp.h` | OpenMP 运行时函数空实现 |
 
 ## dss/ 目录文件分类
 
-### 从 DSS 原项目抄来的代码（尽量不修改）
-
-这些文件保持了 DSS 原始代码逻辑，通过 stub 头文件和少量 C++20→C++17 适配满足依赖：
-
-**注册相关（Register）:**
+### 注册相关（Register）
 - `RegisterEngine.h/.cpp` — 星点检测与注册引擎
 - `Stars.h` — 星点数据结构
 - `MatchingStars.h/.cpp` — 星点匹配算法
 - `BilinearParameters.h/.cpp` — 变换参数
 - `SkyBackground.h` — 天空背景计算
 
-**位图相关（Bitmap）:**
+### 位图相关（Bitmap）
 - `BitmapBase.h/.cpp` — CMemoryBitmap 基类及工厂方法
 - `BitmapExt.h/.cpp` — CAllDepthBitmap，QImage 加载/转换
 - `GrayBitmap.h/.cpp` — CGrayBitmapT<T> 灰度位图模板
 - `ColorBitmap.h/.cpp` — CColorBitmapT<T> 彩色位图模板
 - `ColorRef.h` — COLORREF16, COLORREF 结构体
 - `CFABitmapInfo.h` — CFA（Bayer）信息
+- `MemoryBitmap.h/.cpp` — 内存位图
 
-**叠加相关（Stacking）:**
+### 叠加相关（Stacking）
 - `StackingTasks.h/.cpp` — CAllStackingTasks 叠加任务
 - `MasterFrames.h/.cpp` — CMasterFrames 主帧管理
 - `Filters.h/.cpp` — 中值滤波
 - `BackgroundCalibration.h/.cpp` — 背景校准
+- `DeBloom.h/.cpp` — 去除星芒
 
-**文件读写:**
+### 文件读写
 - `FITSUtil.h/.cpp` — FITS 文件读写（依赖 fitsio 库）
 - `TIFFUtil.h/.cpp` — TIFF 文件读写（依赖 libtiff）
+- `RAWUtils.h/.cpp` — RAW 文件工具
 
-**基础设施:**
+### AVX/SIMD
+- `avx_simd_check.h/.cpp` — SIMD 特性检测
+- `avx_simd_factory.h` — SimdFactory<CRTP> + SimdSelector 模板
+- `avx_luminance.h/.cpp` — AVX 亮度计算
+- `avx_bitmap_util.h/.cpp` — AVX 位图工具
+- `avx_cfa.h/.cpp` — AVX CFA 处理（AVX-256 + NonAVX）
+- `avx_histogram.h/.cpp` — AVX 直方图 + Bezier/Saturation（AVX-256 + NonAVX）
+- `avx_median.h` — AVX 中值计算模板
+- `avx_includes.h` — AVX 头文件集合
+- `avx_support.h` — AvxSupport 工具类
+
+### 基础设施
 - `Workspace.h/.cpp` — 工作区配置（QSettings 后端）
 - `FrameInfo.h/.cpp` — 帧信息
 - `DarkFrame.h/.cpp` — 暗场
@@ -218,114 +213,58 @@ DSS 上游代码使用 C++20 特性。项目约束为 C++17，通过以下方式
 - `FlatPart.h` — CFlatPart
 - `cfa.h` — CFATYPE 枚举
 - `ColorHelpers.h/.cpp` — 颜色辅助函数
+- `histogram.h` — CHistogram/DSS::RGBHistogramAdjust
+- `Settings.h/.cpp` — Settings 类型别名
+- `Bayer.h/.cpp` — Bayer 去马赛克
+- `Matrix.h` — 矩阵工具
 
-**AVX/SIMD:**
-- `avx_simd_check.h/.cpp` — SIMD 特性检测
-- `avx_luminance.h/.cpp` — AVX 亮度计算
-- `avx_bitmap_util.h/.cpp` — AVX 位图工具
-- `avx_median.h` — AVX 中值计算模板
-
-### 新建的 stub 文件
-
-#### 核心 stub（提供类型签名和空操作）
-
-| 文件 | 用途 |
-|------|------|
-| `pch.h` | 预编译头（含 std::span polyfill、C++20 polyfill、标准库 include） |
-| `dss_qt.h` | Qt 类型 stub |
-| `ztrace.h` | ZTRACE/ZASSERT 空宏 |
-| `zexcept.h` | ZException/ZInvalidParameter stub |
-| `zexcbase.h` | ZClass 异常基类 stub（include zexcept.h） |
-| `dssbase.h` | FetchPicture/DebayerPicture 声明，CBitmapInfo 前向声明 |
-
-#### 缺失 DSS 类的 stub（提供最小可编译定义）
-
-| 文件 | 用途 |
-|------|------|
-| `BitmapInfo.h` | CBitmapInfo 完整类定义（bitmap 元数据） |
-| `avx_includes.h` | AVX 头文件集合 stub（include pch.h + immintrin.h） |
-| `avx_histogram.h` | AvxHistogram 类 stub |
-| `avx_support.h` | AvxSupport 工具类 stub |
-| `avx_cfa.h` | AVX CFA 处理 stub |
-| `MultiBitmap.h` | CMultiBitmap 基类及 CColorMultiBitmapT/CGrayMultiBitmapT 前向声明 |
-| `GreyMultiBitmap.h` | CGreyMultiBitmap stub |
-| `ColorMultiBitmap.h` | CColorMultiBitmap stub |
-| `MedianFilterEngine.h` | CMedianFilterEngine 及 CColorMedianFilterEngineT/CGrayMedianFilterEngineT 前向声明 |
-| `DeBloom.h` | DeBloom 函数 stub |
-| `BitmapIterator.h` | CBitmapIterator stub |
-| `AHDDemosaicing.h` | AHD_Demosaic 函数 stub |
-| `histogram.h` | CHistogram stub |
-| `RAWUtils.h` | RAW 文件工具函数 stub |
-| `Settings.h` | Settings 类型别名（= QSettings） |
-| `fitsio.h` | CFITSIO 库最小类型 stub |
-| `omp.h` | OpenMP 运行时函数空实现 |
+### 其他
+- `BitmapInfo.h/.cpp` — CBitmapInfo 位图元数据
+- `BitmapIterator.h` — CBitmapIterator
+- `BitmapCharacteristics.h` — 位图特征
+- `BitmapConstants.h` — 位图常量
+- `AHDDemosaicing.h/.cpp` — AHD 去马赛ic算法
+- `MultiBitmap.h` — CMultiBitmap 基类
+- `GreyMultiBitmap.h/.cpp` — CGreyMultiBitmap
+- `ColorMultiBitmap.h/.cpp` — CColorMultiBitmap
+- `MedianFilterEngine.h/.cpp` — 中值滤波引擎
 
 ## 当前状态
 
 ### 已完成
-- [x] CMakeLists.txt 配置（GLOB_RECURSE + EXCLUDE 过滤）
-- [x] Qt 类型 stub（dss_qt.h）覆盖所有使用到的 Qt 类型
+- [x] CMakeLists.txt 配置（GLOB_RECURSE，无排除规则）
+- [x] C++ 标准升级为 C++20，不再需要 polyfill
+- [x] 从 DSS 同步覆盖 91 个同名文件，使用原始 DSS 代码
+- [x] Qt 类型 stub（dss_qt.h）覆盖大部分 Qt 类型
 - [x] ZClass stub（ztrace.h, zexcept.h, zexcbase.h）
-- [x] pch.h 重写（去除 Qt/exiv2/boost/omp 依赖，含 std::span polyfill）
-- [x] C++20 → C++17 语法适配（consteval, char8_t, <=>, concepts, 指定初始化器, range-for with init）
-- [x] 缺失头文件补充（BitmapInfo.h 等 18 个 stub 文件）
-- [x] `cmake -B build` 配置通过
-- [x] `cmake --build build --config Release` 编译通过
-- [x] `test_main.exe` 可执行文件编译、链接、运行成功
 
-### CMakeLists.txt 中排除的 .cpp 文件
+### 待解决
 
-以下文件因依赖尚未满足而被排除编译，待后续逐步解决：
+**pch.h 改写**：当前 pch.h 直接引用了 Qt/boost/exiv2 真实头文件，需改写为引用 dss_qt.h + 标准库。
 
-**依赖外部库：**
-| 文件 | 缺失依赖 |
-|------|---------|
-| `FITSUtil.cpp` | fitsio (CFITSIO) 库 |
-| `TIFFUtil.cpp` | libtiff + zlib 库 |
+**dss_qt.h 补充**：经过排查，业务代码实际只用了 dss_qt.h 中已有的类型，唯一缺的是：
+- `QElapsedTimer` — 业务代码中用到（计时）
+- 平台检测宏 `Q_OS_WIN` / `Q_OS_LINUX` / `Q_OS_MACOS` 等
+- `QMetaObject` — dssbase.h include 了（但实际只是前向声明，可能不需要实现）
 
-**依赖复杂未移植类型：**
-| 文件 | 主要问题 |
-|------|---------|
-| `BitmapExt.cpp` | QImage 真实功能、BitmapIterator、AHDDemosaicing、DSSBase、ZException 方法 |
-| `DarkFrame.cpp` | RGBHistogram、BitmapIteratorConst、OpenMP、numbers (C++20) |
-| `FlatFrame.cpp` | OpenMP |
-| `MasterFrames.cpp` | DeBloom 真实实现、StackingTasks |
-| `Multitask.cpp` | OpenMP 并行框架 |
-| `StackingTasks.cpp` | 深度依赖链、RAW/FITS/TIFF |
-| `TaskInfo.cpp` | MultiBitmap 虚方法 |
-| `Workspace.cpp` | QSettings 真实读写 |
-| `FrameInfo.cpp` | 深度依赖 |
-| `Filters.cpp` | 中值滤波引擎 |
-| `DSSProgress.cpp` | 进度回调 |
-| `ColorHelpers.cpp` | 颜色辅助函数 |
-| `BackgroundCalibration.cpp` | OpenMP 并行、MSVC ICE |
-| `ColorBitmap.cpp` | CColorMultiBitmapT/CColorMedianFilterEngineT 完整实现 |
-| `GrayBitmap.cpp` | CGrayMultiBitmapT/CGrayMedianFilterEngineT 完整实现 |
-| `RegisterEngine.cpp` | CLightFrameInfo::filePath、深度依赖链 |
-| `MatchingStars.cpp` | std::span 构造推导问题 |
+**boost/exiv2 处理**：pch.h 中引用的 boost::interprocess 和 exiv2 在业务代码中未实际使用，从 pch.h 中移除即可。
 
-**AVX/SIMD（需 immintrin.h 但代码复杂）：**
-| 文件 | 说明 |
-|------|------|
-| `avx_luminance.cpp` | AVX2 亮度计算，使用 __m256i/__m256d 内联函数 |
-| `avx_simd_check.cpp` | SIMD 特性检测，使用平台特定头文件 |
-| `avx_bitmap_util.cpp` | AVX 位图工具 |
+**omp.h**：已有 omp.h stub。
 
 ### 后续工作方向
-- [ ] 逐步恢复排除的 .cpp 文件编译（优先级：MatchingStars → RegisterEngine → ColorBitmap/GrayBitmap → BitmapExt → Stacking）
-- [ ] 集成 fitsio 库（FITSUtil.cpp）
-- [ ] 集成 libtiff + zlib（TIFFUtil.cpp）
-- [ ] 完善 MultiBitmap/MedianFilterEngine 的真实实现
-- [ ] 完善 BitmapIterator 的真实实现
-- [ ] 完善 QImage stub 的真实像素操作
-- [ ] 解决 MSVC C++17 对 BackgroundCalibration.cpp 模板的 ICE 问题
+- [ ] 改写 pch.h：去除 Qt/boost/exiv2 直接引用，改为 include dss_qt.h 和标准库
+- [ ] 补充 dss_qt.h 中缺失的 Qt 类型 stub（QMetaObject 等）
+- [ ] 全量编译通过
+- [ ] 保证注册（Register）和叠加（Stacking）功能正常
 
 ## 设计决策
 
-1. **尽量不修改 DSS 抄来的代码**：所有适配工作优先通过新建 stub 文件完成。仅对 C++20 语法做最小替换（因为 C++17 编译器不支持这些语法）。
+1. **Mock Qt，不引入真实 Qt**：通过 dss_qt.h stub 替代所有 Qt 依赖。性能优化无关紧要，目标是功能正确。
 
-2. **stub 原则**：stub 实现只提供类型签名和空操作（或返回默认值），目标是让代码"能编译"，不保证运行时正确性。
+2. **C++20 标准**：使用 C++20，直接支持 consteval、char8_t、std::span、operator<=>、concepts 等特性，无需 polyfill。
 
-3. **CMake 排除策略**：对于依赖链过深或依赖外部库的 .cpp 文件，通过 CMake EXCLUDE 排除，而非强行 stub 整个依赖树。待依赖就绪后逐个恢复。
+3. **DSS 原始代码优先**：所有同名文件直接从 DSS 同步覆盖。如有编译问题，优先改 stub 文件和 pch.h，尽量不改 DSS 业务代码。
 
-4. **C++17 严格约束**：不使用 /std:c++20 编译选项。C++20 特性通过 polyfill（consteval, char8_t, std::span）或源码最小修改（<=>, concepts, 指定初始化器）适配到 C++17。
+4. **全量编译**：CMakeLists.txt 不排除任何 .cpp 文件，所有 36 个 .cpp 文件全部参与编译。编译问题逐个解决。
+
+5. **功能优先于性能**：AVX/SIMD 代码如果编译有问题可以 fallback 到非 SIMD 路径，关键是注册和叠加的最终结果正确。

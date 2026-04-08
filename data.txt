@@ -10,3 +10,29 @@
 13.78	30.07	-0.53°
 12.80	27.81	-0.38°
 18.35	36.26	-0.58°
+
+
+
+
+
+Frame   dX(px)    dY(px)    Angle(deg)  Stars     Matched     File
+-----   -------   -------   ----------  -----     -------     ----
+[1] detecting stars... 30 stars (1435.99ms), aligning...  [2] detecting stars...[1   ]  ---       ---       ---         30        ---         origin_40246304_raw.dng  (FAILED)
+ 30 stars (1548.11ms), aligning...  [3
+] detecting stars... [2   ]    +3.352    -0.677    -0.06688  30        30          origin_40263009_raw.dng  (1548+70ms)
+ 30 stars (1585.53ms), aligning...  [4] detecting stars...[3   ]  ---       ---       ---         30        ---         origin_40279525_raw.dng  (FAILED)
+ 30 stars (2156.86ms), aligning...  [5] de
+tecting stars...[4   ]  ---       ---       ---         30        ---         origin_40296457_raw.dng  (FAILED)
+ 30 stars (1845.75ms), aligning...  [6] detecting stars...[5   ]    +5.702   +10.177    -0.13412  30        30          origin_40313242_raw.dng  (1846+101ms)
+ 30 stars (1705.43ms), aligning...  [7] detect
+ing stars...[6   ]    +5.050   +12.410    -0.15497  30        30          origin_40329294_raw.dng  (1705+90ms)
+ 30 stars (1587.47ms), aligning...  [8] detecting stars...[7   ]   +10.075   +13.249    -0.23003  30        30          origin_40346025_raw.dng  (1587+75ms)
+ 30 stars (1733.35ms), aligning...  [9] detecting
+stars...[8   ]  ---       ---       ---         30        ---         origin_40363751_raw.dng  (FAILED)
+ 30 stars (1861.3ms), aligning...  [10] detecting stars...[9   ]  ---       ---       ---         30        ---         origin_40381326_raw.dng  (FAILED)
+ 30 stars (2072.21ms), aligning...  [11] detecting sta
+rs...[10  ]  ---       ---       ---         30        ---         origin_40398909_raw.dng  (FAILED)
+ 30 stars (1884.83ms), aligning...  [12] detecting stars...[11  ]  ---       ---       ---         30        ---         origin_40416714_raw.dng  (FAILED)
+ 30 stars (1776.07ms), aligning...[12  ]  ---       ---       ---         30        ---         origin_40434231_raw.dng  (FAILED)
+
+Done.

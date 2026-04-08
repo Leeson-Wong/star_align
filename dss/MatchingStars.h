@@ -1,9 +1,5 @@
 #pragma once
 
-#if !defined(NDEBUG)
-#include <boost/container/vector.hpp>
-namespace bc = boost::container;
-#endif
 #include "DSSTools.h"
 #include "BilinearParameters.h"
 

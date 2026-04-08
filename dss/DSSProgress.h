@@ -36,9 +36,7 @@
 ****************************************************************************/
 // DSSProgress.h : Header file
 //
-#include <QObject>
-#include <QElapsedTimer>
-#include <QString>
+#include "dss_qt.h"
 namespace DSS
 {
 	class OldProgressBase

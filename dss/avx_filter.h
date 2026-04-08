@@ -1,7 +1,7 @@
 #pragma once
 /****************************************************************************
 **
-** Copyright (C) 2020, 2022 David C. Partridge
+** Copyright (C) 2024, 2025 Martin Toeltsch
 **
 ** BSD License Usage
 ** You may use this file under the terms of the BSD license as follows:
@@ -34,51 +34,21 @@
 **
 **
 ****************************************************************************/
-#include "dss_qt.h"
-//
-// This class is a base class for the following classes: DeepSkyStacker,
-// DeepSkyStackerLive and DeepSkyStackerCommandLine
-//  
-class QString;
+template <typename>
+class CInternalMedianFilterEngineT;
 
-class DSSBase
+template <class T>
+class AvxImageFilter
 {
-public:
-	virtual ~DSSBase() = default;
-
-	//
-	// Enum values that match QMessageBox::Icon values
-	//
-	enum class Severity
-	{
-		None = 0,
-		Information = 1,
-		Warning = 2,
-		Critical = 3
-	};
-
-	enum class Method
-	{
-		QMessageBox = 0,
-		QErrorMessage = 1
-	};
-
-	// severity 2 is QMessageBox::Warning
-	virtual void reportError(const QString& message, const QString& type,
-		Severity severity = Severity::Warning, Method method = Method::QMessageBox,
-		bool terminate = false) = 0;
-
-	inline static DSSBase* instance()
-	{
-		return theInstance;
-	}
-
-	inline static void setInstance(DSSBase* instance)
-	{
-		theInstance = instance;
-	}
-
 private:
-	static inline DSSBase* theInstance{ nullptr };
-};
+	CInternalMedianFilterEngineT<double>* filterEngine;
+public:
+	AvxImageFilter() = delete;
+	AvxImageFilter(CInternalMedianFilterEngineT<T>* filEng);
+	AvxImageFilter(const AvxImageFilter&) = default;
+	AvxImageFilter(AvxImageFilter&&) = delete;
+	AvxImageFilter& operator=(const AvxImageFilter&) = delete;
 
+	int filter(const size_t lineStart, const size_t lineEnd);
+	int avxFilter(const size_t lineStart, const size_t lineEnd);
+};
