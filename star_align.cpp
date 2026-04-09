@@ -919,14 +919,14 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
     std::vector<VotingPair> vWorking = vPairs;
 
     while (!bEnd && !bResult) {
-        size_t nrPairs = 8;
-        if (type == TransformType::Bisquared) nrPairs = 9;
-        else if (type == TransformType::Bicubic) nrPairs = 16;
+        size_t nrParams = 8;
+        if (type == TransformType::Bisquared) nrParams = 18;
+        else if (type == TransformType::Bicubic) nrParams = 32;
 
         vAddedPairs.clear();
         vTestedPairs.clear();
 
-        // Add locked pairs first
+        // Add locked pairs first (e.g., corner pairs - DSS-style corner locking)
         for (int idx = 0; idx < static_cast<int>(vWorking.size()); ++idx) {
             if (vWorking[idx].isActive() && vWorking[idx].isLocked()) {
                 vTestedPairs.push_back(vWorking[idx]);
@@ -934,7 +934,13 @@ bool computeCoordinatesTransformation(std::vector<VotingPair>& vPairs,
             }
         }
 
-        // Add other active pairs up to limit
+        // The total pair count requirement: locked pairs + star pairs must reach
+        // a good over-determined system. DSS uses nrExtraPairs + base params.
+        // Here: if we have locked pairs (corners), we keep both.
+        const size_t nrLocked = vTestedPairs.size();
+        const size_t nrPairs = nrLocked + nrParams;
+
+        // Add other active pairs up to total limit
         for (size_t i = 0; i < vWorking.size() && vTestedPairs.size() < nrPairs; ++i) {
             if (vWorking[i].isActive() && !vWorking[i].isLocked()) {
                 vTestedPairs.push_back(vWorking[i]);
@@ -1702,37 +1708,59 @@ std::vector<Star> detectStars(
     auto gray = extractGray(pData, width, height, effectiveStride);
 
     if (params.autoThreshold) {
-        // DSS-style auto-threshold: iteratively adjust threshold to find ~targetStarCount stars.
-        // DSS starts at 65% for the first image, uses previous threshold for subsequent images,
-        // and adjusts using an exponential function.
-        constexpr double MinThreshold = 0.00075; // 0.075% - DSS minimum
-        constexpr double MaxThreshold = 0.65;    // DSS starts at 65% for first image
-        double threshold = MaxThreshold;
-        const int target = params.targetStarCount;
+        // DSS auto-threshold logic (RegisterEngine.cpp):
+        // start at 65%, iterate until enough stars are found or 0.075% floor is reached,
+        // update threshold via the same exponential factor and one-more-iteration rule.
+        constexpr double LowestPossibleThreshold = 0.00075;
 
-        // First pass with high threshold
-        auto stars = detectStarsInternal(gray, width, height, threshold, params.maxStarSize);
+        const size_t numberOfWantedStars = static_cast<size_t>(std::max(1, params.targetStarCount));
+        double threshold = std::clamp(params.autoThresholdStart, LowestPossibleThreshold, 1.0);
+        double usedThreshold = threshold;
+        int oneMoreIteration = 0; // 0=normal, 1=run one more, 2=stop after one-more
 
-        // Iteratively lower threshold until we get enough stars
-        for (int iteration = 0; iteration < 20 && static_cast<int>(stars.size()) < target; ++iteration) {
-            if (threshold <= MinThreshold)
-                break;
-            // Exponential decrease, similar to DSS
-            threshold *= 0.6;
-            threshold = std::max(threshold, MinThreshold);
+        auto Stop = [numberOfWantedStars, &oneMoreIteration, LowestPossibleThreshold](double thres, size_t nStars) -> bool {
+            return (oneMoreIteration == 2)
+                || (oneMoreIteration != 1 && (nStars >= numberOfWantedStars || thres <= LowestPossibleThreshold));
+        };
+
+        auto NewThreshold = [numberOfWantedStars, &oneMoreIteration,
+                             n1 = size_t{0}, n2 = size_t{0}, previousThreshold = 1.0]
+                            (double lastThreshold, size_t nStars) mutable -> double {
+            n2 = n1;
+            n1 = nStars;
+
+            double factor = 0.5;
+            if (n1 != 0) {
+                constexpr double Offset = 1.05;
+                const double infinityPoint = 5.0 + static_cast<double>(numberOfWantedStars);
+                const double tau = std::log(Offset - 1.0) / (-infinityPoint);
+                const double nAvg = static_cast<double>(1 + n1 + n2) / 2.0;
+                const double nDelta = static_cast<double>(n1) - static_cast<double>(n2);
+                const bool tooManyStars = n1 >= std::max<size_t>(3 * numberOfWantedStars, 150);
+
+                oneMoreIteration = (oneMoreIteration == 0) ? (tooManyStars ? 1 : 0) : 2;
+                factor = tooManyStars
+                    ? std::sqrt(previousThreshold / std::max(lastThreshold, 1e-12))
+                    : std::sqrt((Offset - std::exp(-tau * nAvg)) * (Offset - std::exp(-tau * nDelta)));
+            }
+
+            previousThreshold = lastThreshold;
+            return lastThreshold * std::clamp(factor, 0.05, 2.0);
+        };
+
+        std::vector<Star> stars;
+        do {
             stars = detectStarsInternal(gray, width, height, threshold, params.maxStarSize);
-        }
+            usedThreshold = threshold;
+            threshold = NewThreshold(threshold, stars.size());
+        } while (!Stop(threshold, stars.size()));
 
-        // If too many stars (>3x target), raise threshold slightly
-        if (static_cast<int>(stars.size()) > target * 3) {
-            threshold *= 1.3;
-            stars = detectStarsInternal(gray, width, height, threshold, params.maxStarSize);
-        }
-
+        params.usedThreshold = usedThreshold;
         return stars;
     }
 
     // Fixed threshold mode
+    params.usedThreshold = params.threshold;
     return detectStarsInternal(gray, width, height, params.threshold, params.maxStarSize);
 }
 

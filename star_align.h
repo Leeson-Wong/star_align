@@ -54,6 +54,8 @@ struct DetectParams {
     int    maxStarSize = 50;    // Maximum star radius (pixels)
     bool   autoThreshold = false; // If true, iteratively adjust threshold to find ~targetStarCount stars
     int    targetStarCount = 80;  // Target number of stars for auto-threshold
+    double autoThresholdStart = 0.65; // Start value for auto-threshold search (DSS default 65%)
+    mutable double usedThreshold = 0.0; // Output: threshold used in the last detection call
 };
 
 // -------- Core functions --------
