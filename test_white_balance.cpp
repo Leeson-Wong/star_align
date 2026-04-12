@@ -430,7 +430,7 @@ static void runLoadSweep(const std::string& label,
 // ============================================================================
 
 int main() {
-    std::string rawPath = R"(E:\final\star_align\dngs\origin_40229821_raw.dng)";
+    std::string rawPath = R"(F:\mime\star_align\dngs\origin_40229821_raw.dng)";
     if (!fs::exists(rawPath)) {
         std::cerr << "File not found: " << rawPath << std::endl;
         return 1;

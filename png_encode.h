@@ -8,17 +8,20 @@
 
 // ============================================================================
 // Linear RGBA16 -> display-ready RGBA16 post-processing
-// Matches "toe_slope=0" visual: exp_shift + p99 auto bright + pure power gamma
+//
+// Pipeline: exposure -> GREY_WORLD balance -> auto brightness -> gamma(toe)
 //
 // Input:  linear RGBA16 (R,G,B,A each uint16_t, alpha=0xFFFF or 0 for invalid)
 // Output: display-ready RGBA16 written back to the same buffer (in-place)
 // ============================================================================
 
 struct PostProcessConfig {
-    double exp_shift        = 1.20;   // exposure multiplier
-    double auto_bright_pctl = 0.99;   // percentile for auto brightness (0 = disabled)
-    double gamma            = 2.2;    // gamma power (pure power law, no toe slope)
-    double max_scale        = 10.0;   // safety clamp for auto brightness scale
+    double exp_shift           = 1.20;   // exposure multiplier
+    double auto_bright_pctl    = 0.99;   // percentile for auto brightness (0 = disabled)
+    double gamma               = 1.0;    // gamma power
+    double toe_slope           = 10.0;   // toe compensation (only meaningful when gamma != 1.0)
+    double max_scale           = 10.0;   // safety clamp for auto brightness scale
+    bool   grey_world_balance  = true;   // scale R,B so avgR=avgG=avgB before gamma
 };
 
 static const PostProcessConfig DEFAULT_POST_PROCESS = {};
@@ -28,7 +31,7 @@ inline void postProcessRGBA16(uint16_t* rgba, int width, int height,
     const size_t n = static_cast<size_t>(width) * height;
     const double invGamma = 1.0 / cfg.gamma;
 
-    // Step 1: Exposure + auto brightness into float buffer
+    // Step 1: Exposure into float buffer
     std::vector<double> linear(n * 3);
 
     for (size_t p = 0; p < n; ++p) {
@@ -43,7 +46,28 @@ inline void postProcessRGBA16(uint16_t* rgba, int width, int height,
         linear[p * 3 + 2] = rgba[p * 4 + 2] * cfg.exp_shift; // B
     }
 
-    // Step 2: Auto brightness via percentile
+    // Step 2: GREY_WORLD channel balance
+    if (cfg.grey_world_balance) {
+        double sumR = 0, sumG = 0, sumB = 0;
+        size_t count = 0;
+        for (size_t p = 0; p < n; ++p) {
+            if (rgba[p * 4 + 3] == 0) continue;
+            sumR += linear[p * 3 + 0];
+            sumG += linear[p * 3 + 1];
+            sumB += linear[p * 3 + 2];
+            count++;
+        }
+        if (count > 0 && sumG > 0) {
+            double scaleR = sumG / sumR;
+            double scaleB = sumG / sumB;
+            for (size_t p = 0; p < n; ++p) {
+                linear[p * 3 + 0] *= scaleR;
+                linear[p * 3 + 2] *= scaleB;
+            }
+        }
+    }
+
+    // Step 3: Auto brightness via percentile
     if (cfg.auto_bright_pctl > 0.0) {
         std::vector<double> allVals;
         allVals.reserve(n);
@@ -65,12 +89,17 @@ inline void postProcessRGBA16(uint16_t* rgba, int width, int height,
         }
     }
 
-    // Step 3: Pure power gamma (no toe slope)
+    // Step 4: Gamma with toe slope
+    const double toe = cfg.toe_slope;
     for (size_t p = 0; p < n; ++p) {
         if (rgba[p * 4 + 3] == 0) continue;
         for (int c = 0; c < 3; ++c) {
             double norm = std::min(linear[p * 3 + c], 65535.0) / 65535.0;
-            double g = std::pow(norm, invGamma);
+            double g;
+            if (toe > 0)
+                g = (1.0 + toe) * std::pow(norm, invGamma) - toe * norm;
+            else
+                g = std::pow(norm, invGamma);
             rgba[p * 4 + c] = static_cast<uint16_t>(std::round(
                 std::max(0.0, std::min(1.0, g)) * 65535.0));
         }
